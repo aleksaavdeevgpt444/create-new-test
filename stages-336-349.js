@@ -75,7 +75,7 @@ function generateAgentProposalId() {
 /**
  * Build the standard Agent Proposal object.
  */
-function buildAgentProposalObject({ userId, source, messageId, detectedType, confidence, summary, requiresConfirmation, suggestedActions }) {
+function buildAgentProposalObject({ userId, source, messageId, detectedType, confidence, summary, requiresConfirmation, suggestedActions, status }) {
   return {
     proposal_id: generateAgentProposalId(),
     user_id: String(userId || ''),
@@ -86,7 +86,7 @@ function buildAgentProposalObject({ userId, source, messageId, detectedType, con
     summary: String(summary || ''),
     requires_confirmation: requiresConfirmation !== false,
     suggested_actions: Array.isArray(suggestedActions) ? suggestedActions : [],
-    status: AGENT_PROPOSAL_STATUSES.DRAFT,
+    status: String(status || AGENT_PROPOSAL_STATUSES.DRAFT),
     created_at: new Date().toISOString(),
     expires_at: new Date(Date.now() + AGENT_PROPOSAL_EXPIRY_MS).toISOString()
   };
@@ -293,9 +293,13 @@ async function handleTelegramAgentIntake(env, update) {
     await logAgentAuditEvent(env, {
       user_id: plannerUserId,
       telegram_message_id: messageId,
+      proposal_id: null,
+      confirmation_id: null,
       event_type: 'message_classified',
       status: 'success',
-      payload_json: { text: text.slice(0, 500), classification }
+      payload_json: { text: text.slice(0, 500), classification },
+      result_json: null,
+      error_message: null
     });
 
     // Route by detected type
@@ -643,12 +647,12 @@ async function handleAgentTaskProposal(env, { userId, chatId, messageId, text, c
       confidence: classification.confidence,
       summary: classification.summary || text.slice(0, 200),
       requiresConfirmation: true,
-      suggestedActions: ['create_task']
+      suggestedActions: ['create_task'],
+      status: AGENT_PROPOSAL_STATUSES.WAITING_CONFIRMATION
     });
     proposal.telegram_update_id = updateId ? Number(updateId) : null;
     proposal.classification_json = classification;
     proposal.slots_json = allSlots;
-    proposal.status = AGENT_PROPOSAL_STATUSES.WAITING_CONFIRMATION;
 
     await ensureAgentIntakeSchema(env);
     await upsertAgentProposal(env, proposal);
@@ -699,9 +703,12 @@ async function handleAgentTaskProposal(env, { userId, chatId, messageId, text, c
       user_id: userId,
       telegram_message_id: messageId,
       proposal_id: proposal.id,
+      confirmation_id: null,
       event_type: 'proposal_created',
       status: 'success',
-      payload_json: { proposal_id: proposal.id, detected_type: AGENT_MESSAGE_TYPES.TASK, slots: allSlots.length }
+      payload_json: { proposal_id: proposal.id, detected_type: AGENT_MESSAGE_TYPES.TASK, slots: allSlots.length },
+      result_json: null,
+      error_message: null
     });
 
   } catch (error) {
@@ -844,11 +851,14 @@ async function handleAgentConfirmSlotCallback(env, { proposalId, slotIndex, user
 
       await logAgentAuditEvent(env, {
         user_id: userId,
+        telegram_message_id: null,
         proposal_id: proposalId,
         confirmation_id: confirmationId,
         event_type: 'planner_action_applied',
         status: 'success',
-        result_json: { task_id: taskId, already_applied: alreadyApplied }
+        payload_json: null,
+        result_json: { task_id: taskId, already_applied: alreadyApplied },
+        error_message: null
       });
     } else {
       await env.DB.prepare(`UPDATE agent_proposals SET status=?, error=?, updated_at=? WHERE id=?`)
@@ -925,11 +935,11 @@ async function handleAgentMeetingProposal(env, { userId, chatId, messageId, text
       confidence: classification.confidence,
       summary: classification.summary || text.slice(0, 200),
       requiresConfirmation: true,
-      suggestedActions: ['create_meeting']
+      suggestedActions: ['create_meeting'],
+      status: AGENT_PROPOSAL_STATUSES.WAITING_CONFIRMATION
     });
     proposal.telegram_update_id = updateId ? Number(updateId) : null;
     proposal.classification_json = classification;
-    proposal.status = AGENT_PROPOSAL_STATUSES.WAITING_CONFIRMATION;
 
     await ensureAgentIntakeSchema(env);
     await upsertAgentProposal(env, proposal);
@@ -976,11 +986,11 @@ async function handleAgentReminderProposal(env, { userId, chatId, messageId, tex
         confidence: classification.confidence,
         summary: classification.summary || text.slice(0, 200),
         requiresConfirmation: true,
-        suggestedActions: ['create_reminder']
+        suggestedActions: ['create_reminder'],
+        status: AGENT_PROPOSAL_STATUSES.WAITING_CONFIRMATION
       });
       proposal.telegram_update_id = updateId ? Number(updateId) : null;
       proposal.classification_json = classification;
-      proposal.status = AGENT_PROPOSAL_STATUSES.WAITING_CONFIRMATION;
 
       await ensureAgentIntakeSchema(env);
       await upsertAgentProposal(env, proposal);
@@ -1013,11 +1023,11 @@ async function handleAgentReminderProposal(env, { userId, chatId, messageId, tex
       confidence: classification.confidence,
       summary: classification.summary || text.slice(0, 200),
       requiresConfirmation: true,
-      suggestedActions: ['create_reminder']
+      suggestedActions: ['create_reminder'],
+      status: AGENT_PROPOSAL_STATUSES.WAITING_CONFIRMATION
     });
     proposal.telegram_update_id = updateId ? Number(updateId) : null;
     proposal.classification_json = classification;
-    proposal.status = AGENT_PROPOSAL_STATUSES.WAITING_CONFIRMATION;
 
     await ensureAgentIntakeSchema(env);
     await upsertAgentProposal(env, proposal);
@@ -1148,7 +1158,9 @@ async function handleAgentAutoSaveHubRecord(env, { userId, chatId, messageId, te
       project: classification.project || null,
       importance: classification.importance || 'medium',
       tags,
-      includeInWeeklyReview: includeInWeekly
+      includeInWeeklyReview: includeInWeekly,
+      linkedTaskId: null,
+      linkedResourceUrl: null
     });
 
     await updateTelegramIncomingMessageStatus(env, intakeId, AGENT_INTAKE_STATUSES.APPLIED);
@@ -1156,9 +1168,13 @@ async function handleAgentAutoSaveHubRecord(env, { userId, chatId, messageId, te
     await logAgentAuditEvent(env, {
       user_id: userId,
       telegram_message_id: messageId,
+      proposal_id: null,
+      confirmation_id: null,
       event_type: 'hub_record_created',
       status: 'success',
-      result_json: { record_id: recordId, record_type: recordType }
+      payload_json: null,
+      result_json: { record_id: recordId, record_type: recordType },
+      error_message: null
     });
 
     const typeLabel = { insight: '💡 Инсайт', idea: '🌱 Идея', question: '❓ Вопрос' }[recordType] || '📝 Запись';
@@ -1314,9 +1330,14 @@ async function runWeeklyInsightsReview(env, userId) {
 
   await logAgentAuditEvent(env, {
     user_id: userId,
+    telegram_message_id: null,
+    proposal_id: null,
+    confirmation_id: null,
     event_type: 'weekly_insights_generated',
     status: 'success',
-    payload_json: { insights_count: insights.length, top_count: topInsights.length }
+    payload_json: { insights_count: insights.length, top_count: topInsights.length },
+    result_json: null,
+    error_message: null
   });
 }
 
@@ -1403,7 +1424,9 @@ async function handleAgentResourceCallbackAction(env, action, intakeId, userId, 
   const recordId = await createHubRecord(env, {
     userId, source: 'telegram_agent', recordType: 'resource',
     text: text.slice(0, 1000),
+    project: null,
     linkedResourceUrl: mainUrl,
+    linkedTaskId: null,
     importance: 'medium',
     tags: ['telegram', 'resource'],
     includeInWeeklyReview: false
@@ -1473,12 +1496,12 @@ async function buildRescheduleProposal(env, { userId, chatId, messageId, classif
       confidence: classification.confidence || 0.7,
       summary: newTitle,
       requiresConfirmation: true,
-      suggestedActions: ['apply_plan']
+      suggestedActions: ['apply_plan'],
+      status: AGENT_PROPOSAL_STATUSES.WAITING_CONFIRMATION
     });
     proposal.telegram_update_id = updateId ? Number(updateId) : null;
     proposal.classification_json = classification;
     proposal.slots_json = [{ reschedule_candidate: true, candidate }];
-    proposal.status = AGENT_PROPOSAL_STATUSES.WAITING_CONFIRMATION;
 
     await ensureAgentIntakeSchema(env);
     await upsertAgentProposal(env, proposal);
