@@ -30,6 +30,7 @@
  *   procurement_chief_v1.gs
  *   wb_sync_v1.gs         ← WB data sync pipeline (runs before chiefs)
  *   wb_pricing_v1.gs      ← WB Price & Discount Advisor
+ *   supplier_management_v1.gs ← Supplier Directory & Price History
  *   wb_api_client_v1.gs   ← LAST: overrides WB/CS stubs with real API calls
  */
 
@@ -76,6 +77,7 @@ async function handleTelegramUpdate(update, request, env) {
     if (await routeProcurementTelegramCommand_(env, msg, chatId, userId)) return jsonResponse({ ok: true });
     if (await routeWbSyncTelegramCommand_(env, msg, chatId, userId))      return jsonResponse({ ok: true });
     if (await routePricingTelegramCommand_(env, msg, chatId, userId))     return jsonResponse({ ok: true });
+    if (await routeSupplierTelegramCommand_(env, msg, chatId, userId))    return jsonResponse({ ok: true });
   }
 
   if (update.callback_query) {
@@ -121,7 +123,7 @@ export default {
         return jsonResponse({
           ok: true,
           build: 'ai_helpers_worker_v1',
-          modules: ['stage336_349', 'wb_ops_stage1', 'wb_ops_stage2', 'wb_ops_stage2_patch', 'cs_stage1', 'cs_stage2', 'approval_flow', 'qa_runner', 'design_chief', 'rop_chief', 'fulfillment_chief', 'procurement_chief', 'wb_sync', 'wb_pricing'],
+          modules: ['stage336_349', 'wb_ops_stage1', 'wb_ops_stage2', 'wb_ops_stage2_patch', 'cs_stage1', 'cs_stage2', 'approval_flow', 'qa_runner', 'design_chief', 'rop_chief', 'fulfillment_chief', 'procurement_chief', 'wb_sync', 'wb_pricing', 'supplier_mgmt'],
           timestamp: new Date().toISOString(),
         });
       }
@@ -211,6 +213,12 @@ export default {
       // 15. Pricing Advisor routes
       if (pathname.startsWith('/agent/pricing/')) {
         const r = await handlePricingRoutes_(env, request);
+        if (r) return r;
+      }
+
+      // 16. Supplier Management routes
+      if (pathname.startsWith('/agent/suppliers')) {
+        const r = await handleSupplierRoutes_(env, request);
         if (r) return r;
       }
 
