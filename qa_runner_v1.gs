@@ -8,7 +8,7 @@
 //
 // ── Checks performed ─────────────────────────────────────────
 //
-// SECTION 1 — Table existence (29 tables, 1 optional)
+// SECTION 1 — Table existence (44 tables, 1 optional)
 //   agent_incoming_messages, agent_proposals, agent_settings,
 //   agent_audit_log,
 //   wb_daily_snapshot, wb_sku_snapshot, wb_ads_snapshot,
@@ -23,9 +23,15 @@
 //   cs_knowledge_item, cs_feedback_insight,
 //   cs_appeal_item, cs_knowledge_gap,
 //   approval_digest_log,
+//   handoff_event,
+//   scheduler_run_log, scheduler_config,
+//   design_handoff_item, design_card_snapshot, design_content_plan,
+//   rop_kpi_snapshot, rop_target, rop_insight,
+//   fulfillment_fbs_snapshot, fulfillment_tz_item, fulfillment_schedule,
+//   procurement_order, procurement_handoff_item, procurement_price_history,
 //   hub_records (optional)
 //
-// SECTION 2 — Schema column presence (7 tables, 21 columns)
+// SECTION 2 — Schema column presence (13 tables, 37 columns)
 //   wb_agent_proposals: confirmation_id, status,
 //     requires_confirmation, priority
 //   wb_agent_alerts: idempotency_key, alert_type, date
@@ -36,6 +42,18 @@
 //   wb_procurement_snapshot: procurement_status,
 //     latest_order_date
 //   wb_report_health_summary: overall_status, safe_mode
+//   handoff_event: confirmation_id, status,
+//     requires_confirmation, to_chief
+//   fulfillment_tz_item: confirmation_id,
+//     requires_confirmation, status
+//   fulfillment_fbs_snapshot: urgency,
+//     days_of_stock_wb, source_status
+//   rop_target: confirmation_id,
+//     requires_confirmation, metric
+//   design_content_plan: confirmation_id,
+//     requires_confirmation, status
+//   procurement_order: confirmation_id,
+//     requires_confirmation, status
 //
 // SECTION 3 — Data integrity (5 checks)
 //   1. No orphaned cs_draft_response rows
@@ -64,10 +82,12 @@ const QA_BUILD = 'ai_helpers_qa_runner_v1';
 
 // ── Required tables ────────────────────────────────────────────
 const QA_REQUIRED_TABLES = [
+  // §1 Agent Extension
   'agent_incoming_messages',
   'agent_proposals',
   'agent_settings',
   'agent_audit_log',
+  // §2 WB Operations Stage 1
   'wb_daily_snapshot',
   'wb_sku_snapshot',
   'wb_ads_snapshot',
@@ -78,20 +98,45 @@ const QA_REQUIRED_TABLES = [
   'wb_agent_proposals',
   'wb_action_log',
   'wb_cost_data',
+  // §3 WB Operations Stage 2 + Patch
   'wb_stock_snapshot_v2',
   'wb_procurement_snapshot',
   'supplier_directory',
   'wb_report_consistency_check',
   'wb_report_health_summary',
   'wb_report_consistency_check_v2',
+  // §4 CS Operations Stage 1
   'cs_inbox_item',
   'cs_draft_response',
   'cs_product_issue',
   'cs_knowledge_item',
   'cs_feedback_insight',
+  // §5 CS Operations Stage 2
   'cs_appeal_item',
   'cs_knowledge_gap',
+  // §6 Approval Flow
   'approval_digest_log',
+  // §7 Handoff Events
+  'handoff_event',
+  // §8 Scheduler
+  'scheduler_run_log',
+  'scheduler_config',
+  // §9 Design Chief
+  'design_handoff_item',
+  'design_card_snapshot',
+  'design_content_plan',
+  // §10 ROP Chief
+  'rop_kpi_snapshot',
+  'rop_target',
+  'rop_insight',
+  // §11 Fulfillment Chief
+  'fulfillment_fbs_snapshot',
+  'fulfillment_tz_item',
+  'fulfillment_schedule',
+  // §12 Procurement Chief
+  'procurement_order',
+  'procurement_handoff_item',
+  'procurement_price_history',
 ];
 
 const QA_OPTIONAL_TABLES = [
@@ -100,13 +145,27 @@ const QA_OPTIONAL_TABLES = [
 
 // ── Required columns per table ─────────────────────────────────
 const QA_SCHEMA_CHECKS = [
+  // WB core
   { table: 'wb_agent_proposals',      columns: ['confirmation_id', 'status', 'requires_confirmation', 'priority'] },
   { table: 'wb_agent_alerts',         columns: ['idempotency_key', 'alert_type', 'date'] },
+  // CS core
   { table: 'cs_draft_response',       columns: ['confirmation_id', 'status', 'inbox_item_id'] },
   { table: 'cs_inbox_item',           columns: ['source', 'customer_text', 'status'] },
+  // WB Stage 2
   { table: 'wb_stock_snapshot_v2',    columns: ['days_of_stock', 'recommended_supply_qty', 'stock_status'] },
   { table: 'wb_procurement_snapshot', columns: ['procurement_status', 'latest_order_date'] },
   { table: 'wb_report_health_summary',columns: ['overall_status', 'safe_mode'] },
+  // Handoff Events — critical safety columns
+  { table: 'handoff_event',           columns: ['confirmation_id', 'status', 'requires_confirmation', 'to_chief'] },
+  // Fulfillment Chief — safety-critical (all tz items must have confirmation)
+  { table: 'fulfillment_tz_item',     columns: ['confirmation_id', 'requires_confirmation', 'status'] },
+  { table: 'fulfillment_fbs_snapshot',columns: ['urgency', 'days_of_stock_wb', 'source_status'] },
+  // ROP Chief
+  { table: 'rop_target',              columns: ['confirmation_id', 'requires_confirmation', 'metric'] },
+  // Design Chief
+  { table: 'design_content_plan',     columns: ['confirmation_id', 'requires_confirmation', 'status'] },
+  // Procurement Chief — safety-critical
+  { table: 'procurement_order',       columns: ['confirmation_id', 'requires_confirmation', 'status'] },
 ];
 
 // ============================================================

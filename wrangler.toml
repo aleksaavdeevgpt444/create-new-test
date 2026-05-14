@@ -45,6 +45,7 @@ crons = [
   "0 7 * * *",    # 07:00 UTC — cs_daily_report (CS Chief)
   "0 8 * * *",    # 08:00 UTC — rop_daily_report (ROP Chief)
   "0 9 * * *",    # 09:00 UTC — design_daily_report (Design Chief)
+  "0 10 * * *",   # 10:00 UTC — procurement_daily (Procurement Chief)
   "0 * * * *",    # every hour — proposals_check (digest if >5 pending)
   "30 6 * * 1",   # 06:30 UTC Monday — weekly_insights (offset from fulfillment)
 ]

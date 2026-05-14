@@ -32,7 +32,9 @@ const SCHEDULES = {
   // Daily ROP Chief at 08:00 UTC
   ROP_DAILY_REPORT:     '0 8 * * *',
   // Daily Design Chief at 09:00 UTC
-  DESIGN_DAILY_REPORT:  '0 9 * * *',
+  DESIGN_DAILY_REPORT:   '0 9 * * *',
+  // Daily Procurement Chief at 10:00 UTC
+  PROCUREMENT_DAILY:     '0 10 * * *',
   // Hourly pending proposals check (sends digest if >=5 pending)
   PROPOSALS_CHECK:      '0 * * * *',
   // Weekly insights on Monday 06:00 UTC — NOTE: conflicts with FULFILLMENT_DAILY on Monday
@@ -515,6 +517,21 @@ async function runDesignDailyJob_(env) {
   }
 }
 
+async function runProcurementDailyJob_(env) {
+  try {
+    if (typeof runProcurementChief_ === 'function') {
+      return await runProcurementChief_(env);
+    }
+    return { status: 'skipped', reason: 'runProcurementChief_ not available' };
+  } catch (e) {
+    await wbLog_(env.DB, {
+      event_type: 'procurement_daily_error',
+      details_json: JSON.stringify({ error: String(e) }),
+    });
+    throw e;
+  }
+}
+
 // Populate job registry after all handlers are defined
 Object.assign(JOB_REGISTRY, {
   wb_daily_report:     (env) => runWbDailyReportJob_(env),
@@ -522,6 +539,7 @@ Object.assign(JOB_REGISTRY, {
   cs_daily_report:     (env) => runCsDailyReportJob_(env),
   rop_daily_report:    (env) => runRopDailyJob_(env),
   design_daily_report: (env) => runDesignDailyJob_(env),
+  procurement_daily:   (env) => runProcurementDailyJob_(env),
   proposals_check:     (env) => runProposalsCheckJob_(env),
   weekly_insights:     (env) => runWeeklyInsightsJob_(env),
   qa_daily:            (env) => runQaDailyJob_(env),
@@ -535,6 +553,7 @@ const CRON_TO_JOB = {
   [SCHEDULES.CS_DAILY_REPORT]:     'cs_daily_report',
   [SCHEDULES.ROP_DAILY_REPORT]:    'rop_daily_report',
   [SCHEDULES.DESIGN_DAILY_REPORT]: 'design_daily_report',
+  [SCHEDULES.PROCUREMENT_DAILY]:   'procurement_daily',
   [SCHEDULES.PROPOSALS_CHECK]:     'proposals_check',
   [SCHEDULES.WEEKLY_INSIGHTS]:     'weekly_insights',
   [SCHEDULES.QA_DAILY]:            'qa_daily',
@@ -598,6 +617,12 @@ async function handleScheduledEvent_(event, env, ctx) {
     case SCHEDULES.DESIGN_DAILY_REPORT:
       ctx.waitUntil(
         runScheduledJob_(env, 'design_daily_report', event.cron, () => runDesignDailyJob_(env))
+      );
+      break;
+
+    case SCHEDULES.PROCUREMENT_DAILY:
+      ctx.waitUntil(
+        runScheduledJob_(env, 'procurement_daily', event.cron, () => runProcurementDailyJob_(env))
       );
       break;
 

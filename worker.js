@@ -27,6 +27,7 @@
  *   design_chief_v1.gs
  *   rop_chief_v1.gs
  *   fulfillment_chief_v1.gs
+ *   procurement_chief_v1.gs
  *   wb_api_client_v1.gs   ← LAST: overrides WB/CS stubs with real API calls
  */
 
@@ -70,6 +71,7 @@ async function handleTelegramUpdate(update, request, env) {
     if (await routeDesignTelegramCommand_(env, msg, chatId, userId))   return jsonResponse({ ok: true });
     if (await routeRopTelegramCommand_(env, msg, chatId, userId))      return jsonResponse({ ok: true });
     if (await routeFulfillmentTelegramCommand_(env, msg, chatId, userId)) return jsonResponse({ ok: true });
+    if (await routeProcurementTelegramCommand_(env, msg, chatId, userId)) return jsonResponse({ ok: true });
   }
 
   if (update.callback_query) {
@@ -80,6 +82,7 @@ async function handleTelegramUpdate(update, request, env) {
     if (await routeDesignCallbackQuery_(env, cq))         return jsonResponse({ ok: true });
     if (await routeRopCallbackQuery_(env, cq))            return jsonResponse({ ok: true });
     if (await routeFulfillmentCallbackQuery_(env, cq))    return jsonResponse({ ok: true });
+    if (await routeProcurementCallbackQuery_(env, cq))    return jsonResponse({ ok: true });
     if (await routeCsCallbackQueryV2_(env, cq))           return jsonResponse({ ok: true });
     if (await routeCsCallbackQuery_(env, cq))             return jsonResponse({ ok: true });
   }
@@ -113,7 +116,7 @@ export default {
         return jsonResponse({
           ok: true,
           build: 'ai_helpers_worker_v1',
-          modules: ['stage336_349', 'wb_ops_stage1', 'wb_ops_stage2', 'wb_ops_stage2_patch', 'cs_stage1', 'cs_stage2', 'approval_flow', 'qa_runner', 'design_chief', 'rop_chief', 'fulfillment_chief'],
+          modules: ['stage336_349', 'wb_ops_stage1', 'wb_ops_stage2', 'wb_ops_stage2_patch', 'cs_stage1', 'cs_stage2', 'approval_flow', 'qa_runner', 'design_chief', 'rop_chief', 'fulfillment_chief', 'procurement_chief'],
           timestamp: new Date().toISOString(),
         });
       }
@@ -192,7 +195,13 @@ export default {
         if (r) return r;
       }
 
-      // 14-18. Specific agent API routes
+      // 14. Procurement Chief routes
+      if (pathname.startsWith('/agent/procurement/')) {
+        const r = await handleProcurementRoutes_(env, request);
+        if (r) return r;
+      }
+
+      // 15-19. Specific agent API routes
       if (pathname === '/agent/hub/records/create') return handleAgentHubRecordCreateApi(request, env);
       if (pathname === '/agent/settings')           return handleAgentSettingsApi(request, env);
       if (pathname === '/agent/audit')              return handleAgentAuditLogApi(request, env);

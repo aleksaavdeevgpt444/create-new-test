@@ -978,7 +978,83 @@ CREATE INDEX IF NOT EXISTS idx_schedule_status
   ON fulfillment_schedule(status, schedule_date);
 
 -- ============================================================
+-- §12 — Procurement Chief (procurement_chief_v1.gs)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS procurement_order (
+  id                    TEXT PRIMARY KEY,
+  order_date            TEXT NOT NULL,
+  supplier_id           TEXT,
+  supplier_name         TEXT,
+  nm_id                 INTEGER,
+  vendor_code           TEXT,
+  sku_title             TEXT,
+  qty_requested         INTEGER NOT NULL,
+  estimated_unit_cost   REAL,
+  estimated_total_cost  REAL,
+  currency              TEXT DEFAULT 'RUB',
+  urgency               TEXT DEFAULT 'medium',
+  rationale             TEXT,
+  ai_comment            TEXT,
+  status                TEXT DEFAULT 'draft',
+  confirmation_id       TEXT UNIQUE,
+  requires_confirmation INTEGER DEFAULT 1,
+  confirmed_at          TEXT,
+  confirmed_by          TEXT,
+  sent_at               TEXT,
+  source_handoff_id     TEXT,
+  created_at            TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_proc_order_status
+  ON procurement_order(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_proc_order_nm
+  ON procurement_order(nm_id, status);
+CREATE INDEX IF NOT EXISTS idx_proc_order_supplier
+  ON procurement_order(supplier_id, status);
+
+CREATE TABLE IF NOT EXISTS procurement_handoff_item (
+  id               TEXT PRIMARY KEY,
+  handoff_event_id TEXT NOT NULL,
+  nm_id            INTEGER,
+  vendor_code      TEXT,
+  sku_title        TEXT,
+  handoff_type     TEXT,
+  priority         TEXT DEFAULT 'medium',
+  status           TEXT DEFAULT 'pending',
+  order_id         TEXT,
+  notes            TEXT,
+  created_at       TEXT DEFAULT (datetime('now')),
+  updated_at       TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_proc_handoff_status
+  ON procurement_handoff_item(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS procurement_price_history (
+  id            TEXT PRIMARY KEY,
+  nm_id         INTEGER NOT NULL,
+  vendor_code   TEXT,
+  supplier_id   TEXT,
+  supplier_name TEXT,
+  price_date    TEXT NOT NULL,
+  unit_cost     REAL NOT NULL,
+  currency      TEXT DEFAULT 'RUB',
+  min_order_qty INTEGER,
+  notes         TEXT,
+  created_at    TEXT DEFAULT (datetime('now')),
+  UNIQUE(nm_id, supplier_id, price_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_proc_price_nm
+  ON procurement_price_history(nm_id, price_date DESC);
+
+-- Seed scheduler_config for procurement_daily
+INSERT OR IGNORE INTO scheduler_config (id, job_name)
+  VALUES ('scfg_proc', 'procurement_daily');
+
+-- ============================================================
 -- End of schema.sql
--- Tables: 40 | Indexes: 31
+-- Tables: 43 | Indexes: 35
 -- Generated for: ai-agents-worker
 -- ============================================================
