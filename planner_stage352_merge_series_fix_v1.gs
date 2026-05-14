@@ -55458,8 +55458,8 @@ function hydrateTaskFrameworkAssignmentsFromServer() {
         // Build a readable list and ask for recurrence type
         var taskList = sameName.slice(0, 8).map(function (t) {
           return '• ' + (t.due_at ? t.due_at.slice(0, 10) : 'без даты') + ' — ' + String(t.title || '').slice(0, 60);
-        }).join('\n');
-        var recTypeInput = prompt('Найдено ' + sameName.length + ' задач с таким же названием:\n' + taskList + '\n\nТип повтора (daily / weekly / monthly):');
+        }).join('\\n');
+        var recTypeInput = prompt('Найдено ' + sameName.length + ' задач с таким же названием:\\n' + taskList + '\\n\\nТип повтора (daily / weekly / monthly):');
         if (!recTypeInput) return;
         var recType = String(recTypeInput).trim().toLowerCase();
         if (!['daily', 'weekly', 'monthly'].includes(recType)) {
