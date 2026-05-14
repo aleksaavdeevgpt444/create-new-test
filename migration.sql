@@ -481,6 +481,27 @@ CREATE TABLE IF NOT EXISTS procurement_price_history (
 CREATE INDEX IF NOT EXISTS idx_proc_price_nm
   ON procurement_price_history(nm_id, price_date DESC);
 
+-- ── §20 WB Data Sync ─────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS wb_sync_log (
+  id              TEXT PRIMARY KEY,
+  sync_date       TEXT NOT NULL,
+  sync_type       TEXT NOT NULL,
+  status          TEXT DEFAULT 'running',
+  started_at      TEXT NOT NULL,
+  finished_at     TEXT,
+  duration_ms     INTEGER,
+  records_written INTEGER DEFAULT 0,
+  error           TEXT,
+  created_at      TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_wb_sync_log_date
+  ON wb_sync_log(sync_date, sync_type);
+
+INSERT OR IGNORE INTO scheduler_config (id, job_name) VALUES
+  ('scfg_wb_sync', 'wb_data_sync');
+
 -- ── End of migration.sql ──────────────────────────────────────
--- New tables added: 19 | New indexes: 20
+-- New tables added: 20 | New indexes: 21
 -- ALTER TABLE patches are handled automatically by Worker startup.

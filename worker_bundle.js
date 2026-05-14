@@ -1444,6 +1444,98 @@ async function handleAgentProposalStatusApi(request, env) {
 // END STAGE 336–349 — Telegram Agent Extension v1
 // ============================================================
 // ============================================================
+// ROUTER PATCH — Stage 336–349
+// Replace or extend the main fetch handler routing section.
+//
+// In the main worker file, REPLACE:
+//   if (url.pathname === "/telegram/webhook") return handleTelegramWebhook(request, env);
+// WITH:
+//   if (url.pathname === "/telegram/webhook") return handleAgentTelegramWebhook(request, env);
+//
+// AND ADD after existing /agent/* routes:
+//   if (url.pathname === '/agent/hub/records/create') return handleAgentHubRecordCreateApi(request, env);
+//   if (url.pathname === '/agent/settings') return handleAgentSettingsApi(request, env);
+//   if (url.pathname === '/agent/audit') return handleAgentAuditLogApi(request, env);
+//   if (url.pathname === '/agent/weekly-insights') return handleAgentWeeklyInsightsApi(request, env);
+//   if (url.pathname === '/agent/proposals/status') return handleAgentProposalStatusApi(request, env);
+// ============================================================
+
+// ── New endpoints summary ─────────────────────────────────────
+//
+// POST /telegram/webhook
+//   Replaces old handler. Now routes to handleAgentTelegramWebhook.
+//   - Validates X-Telegram-Bot-Api-Secret-Token
+//   - Deduplicates by telegram_update_id
+//   - Stores in agent_incoming_messages
+//   - Classifies with LLM (Gemini/Groq)
+//   - Routes to task/meeting/insight/idea/reminder/resource handler
+//   - Handles inline button callbacks
+//
+// POST /agent/hub/records/create
+//   Creates an Inbox Hub record (insight, idea, resource, etc.)
+//   Body: { user_id, record_type, text, project, importance, tags, include_in_weekly_review }
+//
+// GET  /agent/settings?user_id=
+// POST /agent/settings
+//   Get or update agent settings for a user.
+//   Body (POST): { user_id, settings: { agent_enabled, confirm_tasks, ... } }
+//
+// GET  /agent/audit?user_id=&limit=&event_type=
+//   View agent audit log entries.
+//
+// POST /agent/weekly-insights
+//   Trigger weekly insights review for a user.
+//   Body: { user_id, chat_id }
+//
+// GET  /agent/proposals/status?proposal_id=&user_id=
+//   Check status of a proposal.
+//
+// ── New DB tables ─────────────────────────────────────────────
+//
+// agent_incoming_messages  — stores all incoming Telegram messages
+// agent_proposals          — stores task/meeting/reminder proposals
+// agent_settings           — per-user agent configuration
+// agent_audit_log          — full audit trail of agent decisions
+//
+// ── Idempotency guarantees ───────────────────────────────────
+//
+// 1. telegram_update_id UNIQUE on agent_incoming_messages
+//    → duplicate Telegram webhook calls are silently ignored
+//
+// 2. confirmation_id on agent_action_log (existing Stage 335)
+//    → create_task/create_meeting/create_reminder are idempotent
+//
+// 3. proposal status 'applied'
+//    → double button press shows "already created" message
+//
+// ── Confirmation ID formula ──────────────────────────────────
+//
+// confirmation_id = "confirm_" + userId + "_" + messageId + "_" + actionType + "_" + hash(payload)
+//
+// This means:
+//   - Same Telegram callback → same confirmation_id → no duplicate
+//   - Safe to retry after network error
+//   - Traceable: know which message triggered which action
+//
+// ── LLM fallback chain ───────────────────────────────────────
+//
+// 1. Try Gemini (env.GEMINI_API_KEY)
+// 2. Try Groq/Qwen (env.GROQ_API_KEY)
+// 3. If both fail → ask user to choose type manually (inline buttons)
+//
+// ── Message size guard ───────────────────────────────────────
+//
+// Messages > 2000 chars → saved as note, user asked what to do.
+//
+// ── Forbidden plan actions (apply-plan v1) ───────────────────
+//
+// delete_task, bulk_reschedule, update_recurring_series,
+// change_project_settings, change_agent_settings
+//
+// ── Allowed plan actions v1 ──────────────────────────────────
+//
+// create_task, create_meeting, create_reminder, reschedule_task
+// ============================================================
 // WB Operations Chief — Stage 1 (v1)
 // Build: ai_helpers_stage1_wb_operations_chief_v1
 // Stages: 350–361
@@ -3414,6 +3506,185 @@ async function handleWbAgentRoutes_(env, request) {
 
   return null; // not a WB agent route
 }
+// ============================================================
+// WB Ops Router Patch — Stage 350–361
+// Build: ai_helpers_stage1_wb_operations_chief_v1
+//
+// HOW TO INTEGRATE into your main Worker fetch() handler:
+//
+// STEP 1 — Inside your main fetch(request, env, ctx) BEFORE
+//          the existing /telegram/webhook route, add:
+//
+//   // WB Agent routes
+//   const wbResponse = await handleWbAgentRoutes_(env, request);
+//   if (wbResponse) return wbResponse;
+//
+// STEP 2 — In handleAgentTelegramWebhook (or wherever you
+//          handle Telegram updates), BEFORE the existing
+//          classifyMessageWithLlm_ call add:
+//
+//   // Handle /wb_* commands first (no LLM needed)
+//   if (update.message) {
+//     const handled = await routeWbTelegramCommand_(
+//       env, update.message,
+//       update.message.chat.id,
+//       update.message.from?.id
+//     );
+//     if (handled) return new Response('ok');
+//   }
+//
+// STEP 3 — In handleAgentCallbackQuery_, BEFORE existing
+//          callback routing add:
+//
+//   const wbHandled = await routeWbCallbackQuery_(env, callbackQuery);
+//   if (wbHandled) return;
+//
+// ── No existing routes are removed or changed. ───────────────
+// ── All new routes are additive. ─────────────────────────────
+// ============================================================
+
+// ── New endpoints ─────────────────────────────────────────────
+//
+// GET  /agent/wb/health
+//   Health check. Returns agent status and which env vars are set.
+//
+// POST /agent/wb/report/run
+//   Run WB Operations report for a date.
+//   Body: { date?: "YYYY-MM-DD", user_id?: string }
+//   Returns: { ok, date, report }
+//
+// GET  /agent/wb/report/latest
+//   Get the most recent saved report.
+//   Returns: { ok, date, report }
+//
+// GET  /agent/wb/risks?date=YYYY-MM-DD
+//   List all alerts for a date.
+//
+// GET  /agent/wb/sku?nm_id=...&date=YYYY-MM-DD
+//   Full snapshot for one SKU: sku + finance + ads + stock.
+//
+// GET  /agent/wb/ads?date=YYYY-MM-DD
+//   All ads snapshots, sorted by DRR desc.
+//
+// GET  /agent/wb/finance?date=YYYY-MM-DD
+//   All finance snapshots, sorted by profit_after_ads asc.
+//
+// GET  /agent/wb/stock?date=YYYY-MM-DD
+//   All stock snapshots, sorted by days_of_stock asc.
+//
+// GET  /agent/wb/log?entity_id=&event_type=&limit=50
+//   WB action log entries.
+//
+// POST /agent/wb/cost
+//   Upsert cost/unit economics data for an SKU.
+//   Body: { nm_id, effective_date, cost_per_unit, commission_pct,
+//           logistics_rub, storage_per_day_rub, tax_pct, notes }
+//
+// POST /agent/wb/proposals/:id/confirm
+//   Confirm a proposal. Triggers Planner task creation if INTERNAL_API_BASE is set.
+//   Body: { user_id? }
+//
+// POST /agent/wb/proposals/:id/cancel
+//   Cancel a proposal.
+//   Body: { user_id? }
+//
+// ── New Telegram commands ─────────────────────────────────────
+//
+// /wb_today      — отчёт за вчера
+// /wb_run        — запустить отчёт прямо сейчас
+// /wb_risks      — критичные риски
+// /wb_sku <id>   — анализ конкретного артикула
+// /wb_ads        — рекламные риски
+// /wb_finance    — убыточные артикулы
+// /wb_stock      — риски остатков
+// /wb_tasks      — предложенные задачи
+//
+// ── New DB tables (auto-created on first call) ────────────────
+//
+// wb_daily_snapshot    — дневной снепшот по маркетплейсу
+// wb_sku_snapshot      — снепшот по каждому артикулу
+// wb_ads_snapshot      — снепшот рекламных кампаний
+// wb_finance_snapshot  — юнит-экономика по артикулу
+// wb_stock_snapshot    — остатки по артикулу
+// wb_agent_report      — сводный отчёт AI-шефа
+// wb_agent_alerts      — критичные alerts (дедуплицированы)
+// wb_agent_proposals   — предложения действий (требуют подтверждения)
+// wb_action_log        — полный лог всех событий агента
+// wb_cost_data         — себестоимость (заполняется вручную или импортом)
+//
+// ── New env variables required ───────────────────────────────
+//
+// WB_API_TOKEN         — токен WB API (пока: интеграция готовится)
+// INTERNAL_API_BASE    — base URL вашего Worker (для Planner integration)
+//
+// Already used (from stage 336-349), no changes needed:
+// TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET
+// GEMINI_API_KEY, GEMINI_CLASSIFICATION_MODEL
+// GROQ_API_KEY, GROQ_API_BASE, GROQ_MODEL
+// DB (Cloudflare D1 binding)
+//
+// ── Idempotency guarantees ───────────────────────────────────
+//
+// 1. wb_agent_alerts: idempotency_key UNIQUE per (date, alert_type, nm_id)
+//    → running alerts agent twice for same date does NOT duplicate alerts
+//
+// 2. wb_agent_proposals: confirmation_id UNIQUE
+//    → pressing Telegram confirm button twice is safe — shows "уже создано"
+//
+// 3. wb_agent_report: UNIQUE(date, chief)
+//    → re-running report for same date updates, does not duplicate
+//
+// 4. All snapshots: UNIQUE constraints with ON CONFLICT DO UPDATE
+//    → safe to re-run snapshot builder any number of times
+//
+// ── Safety guarantees ────────────────────────────────────────
+//
+// • No ad budgets or bids are changed automatically
+// • No tasks are created without confirmation_id confirmation
+// • No supply orders are submitted automatically
+// • Missing data is reported as "нет данных", never fabricated
+// • If AI provider is down: code-calculated snapshots still saved,
+//   summary falls back to template text
+// • All errors are written to wb_action_log
+//
+// ── WB API integration TODO ──────────────────────────────────
+//
+// The following functions have stub implementations.
+// Replace with real API calls when WB_API_TOKEN is available:
+//
+//   loadWbSkuData_()     → WB Statistics API v5
+//                          GET https://statistics-api.wildberries.ru/api/v5/supplier/reportDetailByPeriod
+//                          + WB Content API v2 for titles/brands
+//
+//   loadWbAdsData_()     → WB Ads API
+//                          GET https://advert-api.wildberries.ru/adv/v2/adverts
+//                          GET https://advert-api.wildberries.ru/adv/v2/fullstats
+//
+//   loadWbStockData_()   → WB Marketplace API
+//                          GET https://marketplace-api.wildberries.ru/api/v3/warehouses
+//                          GET https://statistics-api.wildberries.ru/api/v1/supplier/stocks
+//
+// Cost data (wb_cost_data) is populated via:
+//   POST /agent/wb/cost   (manual entry or batch import)
+//
+// ── Manual checks after deployment ───────────────────────────
+//
+// 1.  GET /agent/wb/health → status: ok
+// 2.  POST /agent/wb/report/run → report returns, no crash even with no data
+// 3.  GET /agent/wb/report/latest → returns last report
+// 4.  Telegram /wb_today → показывает отчёт или "не найден"
+// 5.  Telegram /wb_run   → запускает отчёт, отвечает в Telegram
+// 6.  Telegram /wb_risks → показывает alerts или "нет рисков"
+// 7.  Telegram /wb_tasks → показывает proposals или "нет задач"
+// 8.  Кнопка [✅ Создать] → proposal переходит в confirmed, дубль не создаётся
+// 9.  Повторное нажатие кнопки → "задача уже создана"
+// 10. POST /agent/wb/cost с данными → wb_cost_data заполняется
+// 11. GET /agent/wb/log → видны все события
+// 12. Повторный /wb_run за ту же дату → отчёт обновляется, не дублируется
+// 13. Telegram /wb_sku 575556886 → карточка артикула (или "не найден")
+// 14. При недоступном AI: отчёт всё равно собирается (fallback summary)
+// 15. При пустом WB API: система пишет "нет данных", не падает
+// ============================================================
 // ============================================================
 // WB Operations Chief — Stage 2 (v1)
 // Build: ai_helpers_stage2_wb_operations_v1
@@ -12005,6 +12276,8 @@ const SCHEDULES = {
   QA_DAILY:             '0 4 * * *',
   // Proposal expiry cleanup at 03:00 UTC
   PROPOSAL_CLEANUP:     '0 3 * * *',
+  // WB data sync at 04:30 UTC — after QA (04:00), before WB chief (05:00)
+  WB_DATA_SYNC:         '30 4 * * *',
 };
 
 // Map job names to their handler functions (populated below after function definitions)
@@ -12493,6 +12766,21 @@ async function runProcurementDailyJob_(env) {
   }
 }
 
+async function runWbDataSyncCronJob_(env) {
+  try {
+    if (typeof runWbSyncJob_ === 'function') {
+      return await runWbSyncJob_(env);
+    }
+    return { status: 'skipped', reason: 'runWbSyncJob_ not available' };
+  } catch (e) {
+    await wbLog_(env.DB, {
+      event_type: 'wb_data_sync_error',
+      details_json: JSON.stringify({ error: String(e) }),
+    });
+    throw e;
+  }
+}
+
 // Populate job registry after all handlers are defined
 Object.assign(JOB_REGISTRY, {
   wb_daily_report:     (env) => runWbDailyReportJob_(env),
@@ -12505,6 +12793,7 @@ Object.assign(JOB_REGISTRY, {
   weekly_insights:     (env) => runWeeklyInsightsJob_(env),
   qa_daily:            (env) => runQaDailyJob_(env),
   proposal_cleanup:    (env) => runProposalCleanupJob_(env),
+  wb_data_sync:        (env) => runWbDataSyncCronJob_(env),
 });
 
 // Map SCHEDULES cron strings to their canonical job names
@@ -12519,6 +12808,7 @@ const CRON_TO_JOB = {
   [SCHEDULES.WEEKLY_INSIGHTS]:     'weekly_insights',
   [SCHEDULES.QA_DAILY]:            'qa_daily',
   [SCHEDULES.PROPOSAL_CLEANUP]:    'proposal_cleanup',
+  [SCHEDULES.WB_DATA_SYNC]:        'wb_data_sync',
 };
 
 // ---------------------------------------------------------------------------
@@ -12596,6 +12886,12 @@ async function handleScheduledEvent_(event, env, ctx) {
     case SCHEDULES.WEEKLY_INSIGHTS:
       ctx.waitUntil(
         runScheduledJob_(env, 'weekly_insights', event.cron, () => runWeeklyInsightsJob_(env))
+      );
+      break;
+
+    case SCHEDULES.WB_DATA_SYNC:
+      ctx.waitUntil(
+        runScheduledJob_(env, 'wb_data_sync', event.cron, () => runWbDataSyncCronJob_(env))
       );
       break;
 
@@ -17541,6 +17837,696 @@ async function handleProcurementRoutes_(env, request) {
   return null;
 }
 // ============================================================
+// wb_sync_v1.gs — WB Data Synchronisation Pipeline
+// Build: ai_helpers_wb_sync_v1
+//
+// Fetches data from Wildberries API and writes to D1 snapshot
+// tables so every chief finds fresh data when it wakes up.
+// Runs at 04:30 UTC (after QA at 04:00, before WB chief at 05:00).
+//
+// ── WB API endpoints used ────────────────────────────────────
+// GET statistics-api.wildberries.ru/api/v1/supplier/stocks
+// GET statistics-api.wildberries.ru/api/v1/supplier/orders
+// GET statistics-api.wildberries.ru/api/v1/supplier/nm-report/grouped
+// POST content-api.wildberries.ru/content/v2/get/cards/list
+// POST discounts-prices-api.wildberries.ru/api/v2/list/goods/filter
+//
+// ── Tables written ───────────────────────────────────────────
+//   wb_stock_snapshot_v2    — stock levels + avg_daily + urgency
+//   wb_sku_snapshot         — order / revenue metrics per nm_id
+//   design_card_snapshot    — card content quality metrics
+//   wb_cost_data            — price / cost data
+//   wb_procurement_snapshot — derived: days_of_stock, reorder qty
+//   wb_sync_log             — sync run history
+//
+// ── Safety rules ─────────────────────────────────────────────
+//   - Never writes requires_confirmation records
+//   - Never modifies proposals or action records
+//   - source_status = 'missing' if WB_API_TOKEN absent
+//   - source_status = 'api_error' on network failure
+//   - ON CONFLICT … DO UPDATE — safe to re-run
+// ============================================================
+
+const WB_SYNC_STATS_BASE   = 'https://statistics-api.wildberries.ru';
+const WB_SYNC_CONTENT_BASE = 'https://content-api.wildberries.ru';
+const WB_SYNC_PRICES_BASE  = 'https://discounts-prices-api.wildberries.ru';
+const WB_SYNC_TIMEOUT_MS   = 25000;
+
+// ── Schema ─────────────────────────────────────────────────────────────────
+
+async function ensureWbSyncSchema_(env) {
+  try {
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS wb_sync_log (
+        id              TEXT PRIMARY KEY,
+        sync_date       TEXT NOT NULL,
+        sync_type       TEXT NOT NULL,
+        status          TEXT DEFAULT 'running',
+        started_at      TEXT NOT NULL,
+        finished_at     TEXT,
+        duration_ms     INTEGER,
+        records_written INTEGER DEFAULT 0,
+        error           TEXT,
+        created_at      TEXT DEFAULT (datetime('now'))
+      )
+    `).run();
+    await env.DB.prepare(`
+      CREATE INDEX IF NOT EXISTS idx_wb_sync_log_date
+        ON wb_sync_log(sync_date, sync_type)
+    `).run();
+  } catch (_) {}
+}
+
+// ── ID helper ──────────────────────────────────────────────────────────────
+
+function wbSyncGenId_(prefix) {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+// ── HTTP helpers ───────────────────────────────────────────────────────────
+
+async function wbSyncGet_(token, url) {
+  const res = await fetch(url, {
+    headers: { Authorization: token, 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(WB_SYNC_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status} GET ${url}: ${body.slice(0, 200)}`);
+  }
+  return res.json();
+}
+
+async function wbSyncPost_(token, url, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: token, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(WB_SYNC_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status} POST ${url}: ${txt.slice(0, 200)}`);
+  }
+  return res.json();
+}
+
+// ── §1 Stock sync → wb_stock_snapshot_v2 ───────────────────────────────────
+//
+// WB returns one row per (nm_id, warehouse). Aggregate by nm_id:
+//   stock_total      = quantity + inWayToClient + inWayFromClient
+//   stock_in_transit = inWayToClient   (on the way to buyer)
+//   stock_reserved   = inWayFromClient (returns in transit)
+// The "available for new orders" qty is `quantity` — stored in
+// stock_total for now; avg_daily step refines days_of_stock.
+
+async function wbSyncStocks_(env, syncDate) {
+  if (!env.WB_API_TOKEN) return { records: 0, source_status: 'missing' };
+  const token  = env.WB_API_TOKEN;
+  // WB stocks endpoint needs dateFrom; use 2 days ago to always get current snapshot
+  const d2From = new Date(new Date(syncDate).getTime() - 2 * 86400000)
+    .toISOString().slice(0, 10);
+  const url = `${WB_SYNC_STATS_BASE}/api/v1/supplier/stocks?dateFrom=${d2From}`;
+
+  let rows;
+  try {
+    rows = await wbSyncGet_(token, url);
+  } catch (e) {
+    return { records: 0, source_status: 'api_error', error: e.message };
+  }
+  if (!Array.isArray(rows)) return { records: 0, source_status: 'empty' };
+
+  // Aggregate by nmId across warehouses
+  const byNm = {};
+  for (const r of rows) {
+    const nmId = r.nmId;
+    if (!nmId) continue;
+    if (!byNm[nmId]) {
+      byNm[nmId] = {
+        nm_id:           nmId,
+        vendor_code:     r.supplierArticle || '',
+        sku_title:       r.subjectName || '',
+        stock_total:     0,
+        stock_in_transit: 0,
+        stock_reserved:  0,
+      };
+    }
+    byNm[nmId].stock_total       += (r.quantity || 0) + (r.inWayToClient || 0) + (r.inWayFromClient || 0);
+    byNm[nmId].stock_in_transit  += r.inWayToClient  || 0;
+    byNm[nmId].stock_reserved    += r.inWayFromClient || 0;
+  }
+
+  let written = 0;
+  for (const e of Object.values(byNm)) {
+    try {
+      await env.DB.prepare(`
+        INSERT INTO wb_stock_snapshot_v2
+          (id, date, nm_id, vendor_code, sku_title,
+           stock_total, stock_in_transit, stock_reserved,
+           source_status, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', datetime('now'))
+        ON CONFLICT(date, nm_id) DO UPDATE SET
+          vendor_code      = excluded.vendor_code,
+          sku_title        = excluded.sku_title,
+          stock_total      = excluded.stock_total,
+          stock_in_transit = excluded.stock_in_transit,
+          stock_reserved   = excluded.stock_reserved,
+          source_status    = 'ready',
+          updated_at       = datetime('now')
+      `).bind(
+        wbSyncGenId_('stk'), syncDate, e.nm_id,
+        e.vendor_code, e.sku_title,
+        e.stock_total, e.stock_in_transit, e.stock_reserved,
+      ).run();
+      written++;
+    } catch (_) {}
+  }
+  return { records: written, source_status: written > 0 ? 'ready' : 'empty' };
+}
+
+// ── §2 Orders 7d → avg_daily_orders_7d + days_of_stock ────────────────────
+//
+// Fetches the last 7 days of non-cancelled orders, counts per nm_id,
+// then updates wb_stock_snapshot_v2 with avg_daily, days_of_stock,
+// risk_level, stock_status, and recommended_supply_qty.
+// Must run AFTER §1 (needs stock_total already written).
+
+async function wbSyncAvgDaily_(env, syncDate) {
+  if (!env.WB_API_TOKEN) return { records: 0, source_status: 'missing' };
+  const token  = env.WB_API_TOKEN;
+  const d7From = new Date(new Date(syncDate).getTime() - 7 * 86400000)
+    .toISOString().slice(0, 10);
+  const url = `${WB_SYNC_STATS_BASE}/api/v1/supplier/orders?dateFrom=${d7From}&flag=0`;
+
+  let orders;
+  try {
+    orders = await wbSyncGet_(token, url);
+  } catch (e) {
+    return { records: 0, source_status: 'api_error', error: e.message };
+  }
+  if (!Array.isArray(orders)) return { records: 0, source_status: 'empty' };
+
+  // Sum non-cancelled quantities per nm_id
+  const countByNm = {};
+  for (const o of orders) {
+    if (o.isCancel) continue;
+    const nm = o.nmId;
+    if (!nm) continue;
+    countByNm[nm] = (countByNm[nm] || 0) + (o.quantity || 1);
+  }
+
+  let updated = 0;
+  for (const [nmIdStr, total7d] of Object.entries(countByNm)) {
+    const nmId  = Number(nmIdStr);
+    const avg7d = total7d / 7;
+
+    try {
+      const row = await env.DB.prepare(
+        `SELECT stock_total FROM wb_stock_snapshot_v2 WHERE date = ? AND nm_id = ?`
+      ).bind(syncDate, nmId).first();
+
+      const stock       = row ? (row.stock_total || 0) : 0;
+      const daysOfStock = avg7d > 0 ? stock / avg7d : null;
+      const urgency     = !daysOfStock ? 'none'
+        : daysOfStock < 3  ? 'critical'
+        : daysOfStock < 7  ? 'high'
+        : daysOfStock < 14 ? 'medium'
+        : daysOfStock < 21 ? 'low' : 'none';
+      const stockStatus = !daysOfStock ? 'unknown'
+        : daysOfStock < 7  ? 'critical'
+        : daysOfStock < 14 ? 'warning' : 'ok';
+      // 30-day target supply: keep 30d of stock
+      const repQty = avg7d > 0 ? Math.max(0, Math.round(30 * avg7d - stock)) : 0;
+
+      if (row) {
+        await env.DB.prepare(`
+          UPDATE wb_stock_snapshot_v2
+          SET avg_daily_orders_7d  = ?,
+              days_of_stock        = ?,
+              risk_level           = ?,
+              stock_status         = ?,
+              recommended_supply_qty = ?,
+              updated_at           = datetime('now')
+          WHERE date = ? AND nm_id = ?
+        `).bind(avg7d, daysOfStock, urgency, stockStatus, repQty, syncDate, nmId).run();
+      } else {
+        // Stock row not yet written (no WB stock entry) — insert minimal placeholder
+        await env.DB.prepare(`
+          INSERT OR IGNORE INTO wb_stock_snapshot_v2
+            (id, date, nm_id, avg_daily_orders_7d, days_of_stock,
+             risk_level, stock_status, recommended_supply_qty,
+             source_status, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'partial', datetime('now'))
+        `).bind(
+          wbSyncGenId_('stk'), syncDate, nmId,
+          avg7d, daysOfStock, urgency, stockStatus, repQty,
+        ).run();
+      }
+      updated++;
+    } catch (_) {}
+  }
+  return { records: updated, source_status: updated > 0 ? 'ready' : 'empty' };
+}
+
+// ── §3 NM grouped report → wb_sku_snapshot ─────────────────────────────────
+//
+// 30-day aggregated metrics per nm_id: orders, revenue, returns,
+// avg_rating, feedbacksCount, conversion. Used by ROP Chief.
+
+async function wbSyncFetchNmPage_(token, dateFrom, dateTo, page) {
+  const url = `${WB_SYNC_STATS_BASE}/api/v1/supplier/nm-report/grouped` +
+    `?period.begin=${dateFrom}&period.end=${dateTo}` +
+    `&aggregationLevel=nm&page=${page}&limit=100`;
+  return wbSyncGet_(token, url);
+}
+
+async function wbSyncSkuMetrics_(env, syncDate) {
+  if (!env.WB_API_TOKEN) return { records: 0, source_status: 'missing' };
+  const token   = env.WB_API_TOKEN;
+  const d30From = new Date(new Date(syncDate).getTime() - 30 * 86400000)
+    .toISOString().slice(0, 10);
+
+  const allCards = [];
+  let page = 1;
+  while (page <= 30) {
+    try {
+      const res   = await wbSyncFetchNmPage_(token, d30From, syncDate, page);
+      const cards = res?.data?.cards || [];
+      allCards.push(...cards);
+      if (!res?.data?.isNextPage || cards.length === 0) break;
+      page++;
+    } catch (_) { break; }
+  }
+
+  let written = 0;
+  const now = new Date().toISOString();
+
+  for (const card of allCards) {
+    const nmId = card.nmID;
+    if (!nmId) continue;
+
+    const ordersCount  = card.ordersCount  || 0;
+    const returnsCount = card.returnsCount  || 0;
+    const salesRub     = card.buyoutsSumRub || card.ordersSumRub || 0;
+    const returnRate   = ordersCount > 0 ? returnsCount / ordersCount : 0;
+    const skuStatus    = returnRate > 0.3 ? 'risk_high_returns'
+      : (card.avgRating != null && card.avgRating < 4) ? 'risk_low_rating' : 'ok';
+
+    try {
+      await env.DB.prepare(`
+        INSERT INTO wb_sku_snapshot
+          (date, marketplace, nm_id, vendor_code, title,
+           orders_count, sales_rub, returns_count,
+           sku_status, source_status, updated_at)
+        VALUES (?, 'WB', ?, ?, ?, ?, ?, ?, ?, 'ready', ?)
+        ON CONFLICT(date, marketplace, nm_id) DO UPDATE SET
+          orders_count  = excluded.orders_count,
+          sales_rub     = excluded.sales_rub,
+          returns_count = excluded.returns_count,
+          sku_status    = excluded.sku_status,
+          source_status = 'ready',
+          updated_at    = excluded.updated_at
+      `).bind(
+        syncDate, String(nmId),
+        card.vendorCode || '', card.imtName || '',
+        ordersCount, salesRub, returnsCount,
+        skuStatus, now,
+      ).run();
+      written++;
+    } catch (_) {}
+  }
+  return { records: written, source_status: written > 0 ? 'ready' : 'empty' };
+}
+
+// ── §4 Card content → design_card_snapshot ─────────────────────────────────
+//
+// Paginates through the seller's entire card catalogue. For each card,
+// computes a quality score and lists concrete issues.
+// Used by Design Chief's card content analyser.
+
+async function wbSyncCardContent_(env, syncDate) {
+  if (!env.WB_API_TOKEN) return { records: 0, source_status: 'missing' };
+  const token = env.WB_API_TOKEN;
+  const url   = `${WB_SYNC_CONTENT_BASE}/content/v2/get/cards/list`;
+
+  let cursor  = null;
+  let written = 0;
+  let page    = 0;
+
+  while (page < 50) {
+    let res;
+    try {
+      res = await wbSyncPost_(token, url, {
+        settings: {
+          sort:   { ascending: false },
+          filter: { withPhoto: -1 },
+          cursor: { limit: 100, ...(cursor || {}) },
+        },
+      });
+    } catch (_) { break; }
+
+    const cards = res?.cards || [];
+    if (cards.length === 0) break;
+
+    for (const card of cards) {
+      const nmId    = card.nmID;
+      if (!nmId) continue;
+      const titleLen = (card.title        || '').length;
+      const descLen  = (card.description  || '').length;
+      const photos   = (card.photos       || []).length;
+      const chars    = (card.characteristics || []).length;
+      const hasVideo = card.video ? 1 : 0;
+
+      const issues = [];
+      if (titleLen < 30)  issues.push({ type: 'short_title',         detail: `${titleLen} chars` });
+      if (photos   < 5)   issues.push({ type: 'few_photos',          detail: `${photos} photos` });
+      if (!hasVideo)      issues.push({ type: 'no_video' });
+      if (descLen  < 100) issues.push({ type: 'short_description',   detail: `${descLen} chars` });
+      if (chars    < 3)   issues.push({ type: 'few_characteristics', detail: `${chars} chars` });
+
+      const score = Math.max(0, 100 - issues.length * 15);
+
+      try {
+        await env.DB.prepare(`
+          INSERT INTO design_card_snapshot
+            (id, snapshot_date, nm_id, vendor_code, sku_title,
+             title_length, description_length, photos_count,
+             characteristics_count, has_video,
+             title_keywords_json, issues_found_json, overall_score, source_status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, 'ready')
+          ON CONFLICT(snapshot_date, nm_id) DO UPDATE SET
+            title_length          = excluded.title_length,
+            description_length    = excluded.description_length,
+            photos_count          = excluded.photos_count,
+            characteristics_count = excluded.characteristics_count,
+            has_video             = excluded.has_video,
+            issues_found_json     = excluded.issues_found_json,
+            overall_score         = excluded.overall_score,
+            source_status         = 'ready'
+        `).bind(
+          wbSyncGenId_('dcs'), syncDate, nmId,
+          card.vendorCode || '', card.title || '',
+          titleLen, descLen, photos, chars, hasVideo,
+          JSON.stringify(issues), score,
+        ).run();
+        written++;
+      } catch (_) {}
+    }
+
+    const newCursor = res?.cursor;
+    if (!newCursor || cards.length < 100) break;
+    cursor = { updatedAt: newCursor.updatedAt, nmID: newCursor.nmID, limit: 100 };
+    page++;
+  }
+  return { records: written, source_status: written > 0 ? 'ready' : 'empty' };
+}
+
+// ── §5 Prices → wb_cost_data ───────────────────────────────────────────────
+//
+// Fetches goods with current prices/discounts. Writes the lowest-size
+// discounted price as cost_per_unit — a proxy for the buyer price.
+// Supplier cost (COGS) should be set manually or from a separate feed.
+
+async function wbSyncCostData_(env, syncDate) {
+  if (!env.WB_API_TOKEN) return { records: 0, source_status: 'missing' };
+  const token = env.WB_API_TOKEN;
+  const url   = `${WB_SYNC_PRICES_BASE}/api/v2/list/goods/filter`;
+  const now   = new Date().toISOString();
+
+  let offset  = 0;
+  let written = 0;
+
+  while (offset < 5000) {
+    let res;
+    try {
+      res = await wbSyncPost_(token, url, {
+        sort:   { ascending: false },
+        filter: {},
+        cursor: { limit: 100, offset },
+      });
+    } catch (_) { break; }
+
+    const goods = res?.data?.listGoods || [];
+    if (goods.length === 0) break;
+
+    for (const g of goods) {
+      const nmId = g.nmID;
+      if (!nmId) continue;
+      const sizes = g.sizes || [];
+      const price = sizes.length > 0
+        ? (sizes[0].discountedPrice || sizes[0].price || 0)
+        : 0;
+
+      try {
+        await env.DB.prepare(`
+          INSERT INTO wb_cost_data (nm_id, effective_date, cost_per_unit, updated_at)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(nm_id, effective_date) DO UPDATE SET
+            cost_per_unit = excluded.cost_per_unit,
+            updated_at    = excluded.updated_at
+        `).bind(String(nmId), syncDate, price, now).run();
+        written++;
+      } catch (_) {}
+    }
+
+    if (goods.length < 100) break;
+    offset += 100;
+  }
+  return { records: written, source_status: written > 0 ? 'ready' : 'empty' };
+}
+
+// ── §6 Procurement snapshot (derived, no API call) ─────────────────────────
+//
+// Reads wb_stock_snapshot_v2 (written in §1–2) and computes:
+//   recommended_order_qty = max(0, 45 * avg_daily - stock_total)
+//   procurement_status    = 'order_needed' | 'ok' | 'missing_data'
+// Used by Procurement Chief's reorder-point agent.
+
+async function wbSyncProcurementSnapshot_(env, syncDate) {
+  let rows;
+  try {
+    rows = await env.DB.prepare(`
+      SELECT nm_id, vendor_code, sku_title,
+             stock_total, avg_daily_orders_7d,
+             days_of_stock, risk_level
+      FROM wb_stock_snapshot_v2
+      WHERE date = ?
+    `).bind(syncDate).all();
+  } catch (_) {
+    return { records: 0, source_status: 'db_error' };
+  }
+
+  const entries = rows?.results || [];
+  let written   = 0;
+
+  for (const e of entries) {
+    const avg7d       = e.avg_daily_orders_7d || 0;
+    const stock       = e.stock_total || 0;
+    const days        = e.days_of_stock;
+    const recommended = avg7d > 0 ? Math.max(0, Math.round(45 * avg7d - stock)) : 0;
+    const procStatus  = days == null ? 'missing_data'
+      : days < 14    ? 'order_needed' : 'ok';
+
+    try {
+      await env.DB.prepare(`
+        INSERT INTO wb_procurement_snapshot
+          (id, date, nm_id, sku_title, vendor_code,
+           avg_daily_orders_30d, days_of_stock,
+           recommended_order_qty, procurement_status, source_status, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', datetime('now'))
+        ON CONFLICT(date, nm_id) DO UPDATE SET
+          avg_daily_orders_30d  = excluded.avg_daily_orders_30d,
+          days_of_stock         = excluded.days_of_stock,
+          recommended_order_qty = excluded.recommended_order_qty,
+          procurement_status    = excluded.procurement_status,
+          source_status         = 'ready',
+          updated_at            = datetime('now')
+      `).bind(
+        wbSyncGenId_('prsnap'), syncDate, e.nm_id,
+        e.sku_title || '', e.vendor_code || '',
+        avg7d, days, recommended, procStatus,
+      ).run();
+      written++;
+    } catch (_) {}
+  }
+  return { records: written, source_status: written > 0 ? 'ready' : 'empty' };
+}
+
+// ── §7 Orchestrator ────────────────────────────────────────────────────────
+
+async function runWbDataSync_(env) {
+  await ensureWbSyncSchema_(env);
+
+  const syncDate = new Date().toISOString().slice(0, 10);
+  const syncId   = wbSyncGenId_('wbsync');
+  const startMs  = Date.now();
+
+  try {
+    await env.DB.prepare(`
+      INSERT INTO wb_sync_log
+        (id, sync_date, sync_type, status, started_at)
+      VALUES (?, ?, 'full_sync', 'running', datetime('now'))
+    `).bind(syncId, syncDate).run();
+  } catch (_) {}
+
+  const results    = {};
+  const errorParts = [];
+
+  const run = async (key, fn) => {
+    try {
+      results[key] = await fn();
+      if (results[key].error) errorParts.push(`${key}: ${results[key].error}`);
+    } catch (e) {
+      results[key] = { records: 0, source_status: 'error', error: e.message };
+      errorParts.push(`${key}: ${e.message}`);
+    }
+  };
+
+  // Steps 1–2 are sequential (avg_daily needs stocks written first)
+  await run('stocks',      () => wbSyncStocks_(env, syncDate));
+  await run('avg_daily',   () => wbSyncAvgDaily_(env, syncDate));
+
+  // Steps 3–5 can run in parallel (independent API sources)
+  await Promise.all([
+    run('sku_metrics', () => wbSyncSkuMetrics_(env, syncDate)),
+    run('cards',       () => wbSyncCardContent_(env, syncDate)),
+    run('cost_data',   () => wbSyncCostData_(env, syncDate)),
+  ]);
+
+  // Step 6 is derived from the results of steps 1–2
+  await run('procurement', () => wbSyncProcurementSnapshot_(env, syncDate));
+
+  const duration     = Date.now() - startMs;
+  const totalRecords = Object.values(results).reduce((s, r) => s + (r.records || 0), 0);
+  const status       = errorParts.length > 0 ? 'partial' : 'ok';
+
+  try {
+    await env.DB.prepare(`
+      UPDATE wb_sync_log
+      SET status          = ?,
+          finished_at     = datetime('now'),
+          duration_ms     = ?,
+          records_written = ?,
+          error           = ?
+      WHERE id = ?
+    `).bind(
+      status, duration, totalRecords,
+      errorParts.length > 0 ? errorParts.join('; ') : null,
+      syncId,
+    ).run();
+  } catch (_) {}
+
+  return {
+    sync_id:       syncId,
+    sync_date:     syncDate,
+    status,
+    duration_ms:   duration,
+    total_records: totalRecords,
+    results,
+  };
+}
+
+// ── §8 Scheduler job wrapper ───────────────────────────────────────────────
+
+async function runWbSyncJob_(env) {
+  return runWbDataSync_(env);
+}
+
+// ── §9 HTTP routes ─────────────────────────────────────────────────────────
+
+async function handleWbSyncRoutes_(env, request) {
+  const pathname = new URL(request.url).pathname;
+
+  // GET /agent/wb/sync/status — last 20 sync runs
+  if (request.method === 'GET' && pathname === '/agent/wb/sync/status') {
+    await ensureWbSyncSchema_(env);
+    const rows = await env.DB.prepare(
+      `SELECT * FROM wb_sync_log ORDER BY started_at DESC LIMIT 20`
+    ).all();
+    return new Response(JSON.stringify({ ok: true, logs: rows?.results || [] }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // POST /agent/wb/sync/run — manual trigger
+  if (request.method === 'POST' && pathname === '/agent/wb/sync/run') {
+    const result = await runWbDataSync_(env);
+    return new Response(JSON.stringify({ ok: true, result }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  return null;
+}
+
+// ── §10 Telegram commands ──────────────────────────────────────────────────
+
+async function routeWbSyncTelegramCommand_(env, msg, chatId, userId) {
+  const text = (msg.text || '').trim().split('@')[0].toLowerCase();
+
+  // /wb_sync — show last sync status
+  if (text === '/wb_sync') {
+    let row = null;
+    try {
+      await ensureWbSyncSchema_(env);
+      row = await env.DB.prepare(
+        `SELECT * FROM wb_sync_log ORDER BY started_at DESC LIMIT 1`
+      ).first();
+    } catch (_) {}
+
+    const esc = (s) => String(s || '').replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+
+    if (!row) {
+      await sendTelegramMessage_(env, chatId,
+        '*WB Sync*\nСинхронизация ещё не запускалась\\.\nЗапустить: /wb\\_sync\\_run',
+        { parse_mode: 'MarkdownV2' });
+      return true;
+    }
+
+    const icon = row.status === 'ok' ? '✅' : row.status === 'partial' ? '⚠️' : '🔄';
+    const dur  = row.duration_ms ? `${Math.round(row.duration_ms / 1000)}с` : 'N/A';
+    const lines = [
+      `*WB Sync — последний запуск*`,
+      `Дата: ${esc(row.sync_date)}`,
+      `Статус: ${icon} ${esc(row.status)}`,
+      `Начало: ${esc(row.started_at)}`,
+      `Длительность: ${esc(dur)}`,
+      `Записей: ${esc(row.records_written || 0)}`,
+    ];
+    if (row.error) lines.push(`Ошибки: ${esc(row.error.slice(0, 300))}`);
+    await sendTelegramMessage_(env, chatId, lines.join('\n'), { parse_mode: 'MarkdownV2' });
+    return true;
+  }
+
+  // /wb_sync_run — manual sync trigger
+  if (text === '/wb_sync_run') {
+    await sendTelegramMessage_(env, chatId, '⏳ Синхронизация данных WB запущена...');
+    try {
+      const result = await runWbDataSync_(env);
+      const r = result.results || {};
+      const icon = result.status === 'ok' ? '✅' : '⚠️';
+      const lines = [
+        `*WB Sync завершён* ${icon}`,
+        `Дата: ${result.sync_date}  |  Время: ${Math.round(result.duration_ms / 1000)}с`,
+        '',
+        `📦 Остатки: ${r.stocks?.records || 0} SKU \\(${r.stocks?.source_status || '—'}\\)`,
+        `📊 Ср\\. дн\\. заказы: ${r.avg_daily?.records || 0} SKU`,
+        `📈 Метрики NM: ${r.sku_metrics?.records || 0} SKU`,
+        `🖼 Карточки: ${r.cards?.records || 0} SKU`,
+        `💰 Цены: ${r.cost_data?.records || 0} SKU`,
+        `🚚 Закупки: ${r.procurement?.records || 0} SKU`,
+        `*Всего: ${result.total_records} записей*`,
+      ];
+      await sendTelegramMessage_(env, chatId, lines.join('\n'), { parse_mode: 'MarkdownV2' });
+    } catch (e) {
+      await sendTelegramMessage_(env, chatId, `❌ Ошибка синхронизации: ${e.message}`);
+    }
+    return true;
+  }
+
+  return false;
+}
+// ============================================================
 // WB API Client — production-ready замена стабов
 // Build: ai_helpers_wb_api_client_v1
 //
@@ -18169,6 +19155,7 @@ async function handleWbApiClientRoutes_(env, request) {
  *   rop_chief_v1.gs
  *   fulfillment_chief_v1.gs
  *   procurement_chief_v1.gs
+ *   wb_sync_v1.gs         ← WB data sync pipeline (runs before chiefs)
  *   wb_api_client_v1.gs   ← LAST: overrides WB/CS stubs with real API calls
  */
 
@@ -18213,6 +19200,7 @@ async function handleTelegramUpdate(update, request, env) {
     if (await routeRopTelegramCommand_(env, msg, chatId, userId))      return jsonResponse({ ok: true });
     if (await routeFulfillmentTelegramCommand_(env, msg, chatId, userId)) return jsonResponse({ ok: true });
     if (await routeProcurementTelegramCommand_(env, msg, chatId, userId)) return jsonResponse({ ok: true });
+    if (await routeWbSyncTelegramCommand_(env, msg, chatId, userId))      return jsonResponse({ ok: true });
   }
 
   if (update.callback_query) {
@@ -18257,7 +19245,7 @@ export default {
         return jsonResponse({
           ok: true,
           build: 'ai_helpers_worker_v1',
-          modules: ['stage336_349', 'wb_ops_stage1', 'wb_ops_stage2', 'wb_ops_stage2_patch', 'cs_stage1', 'cs_stage2', 'approval_flow', 'qa_runner', 'design_chief', 'rop_chief', 'fulfillment_chief', 'procurement_chief'],
+          modules: ['stage336_349', 'wb_ops_stage1', 'wb_ops_stage2', 'wb_ops_stage2_patch', 'cs_stage1', 'cs_stage2', 'approval_flow', 'qa_runner', 'design_chief', 'rop_chief', 'fulfillment_chief', 'procurement_chief', 'wb_sync'],
           timestamp: new Date().toISOString(),
         });
       }
@@ -18274,6 +19262,8 @@ export default {
 
       // 4. WB agent routes
       if (pathname.startsWith('/agent/wb/')) {
+        const rs = await handleWbSyncRoutes_(env, request);
+        if (rs) return rs;
         const r = await handleWbStage2Routes_(env, request);
         if (r) return r;
         const r2 = await handleWbAgentRoutes_(env, request);

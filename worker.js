@@ -28,6 +28,7 @@
  *   rop_chief_v1.gs
  *   fulfillment_chief_v1.gs
  *   procurement_chief_v1.gs
+ *   wb_sync_v1.gs         ← WB data sync pipeline (runs before chiefs)
  *   wb_api_client_v1.gs   ← LAST: overrides WB/CS stubs with real API calls
  */
 
@@ -72,6 +73,7 @@ async function handleTelegramUpdate(update, request, env) {
     if (await routeRopTelegramCommand_(env, msg, chatId, userId))      return jsonResponse({ ok: true });
     if (await routeFulfillmentTelegramCommand_(env, msg, chatId, userId)) return jsonResponse({ ok: true });
     if (await routeProcurementTelegramCommand_(env, msg, chatId, userId)) return jsonResponse({ ok: true });
+    if (await routeWbSyncTelegramCommand_(env, msg, chatId, userId))      return jsonResponse({ ok: true });
   }
 
   if (update.callback_query) {
@@ -116,7 +118,7 @@ export default {
         return jsonResponse({
           ok: true,
           build: 'ai_helpers_worker_v1',
-          modules: ['stage336_349', 'wb_ops_stage1', 'wb_ops_stage2', 'wb_ops_stage2_patch', 'cs_stage1', 'cs_stage2', 'approval_flow', 'qa_runner', 'design_chief', 'rop_chief', 'fulfillment_chief', 'procurement_chief'],
+          modules: ['stage336_349', 'wb_ops_stage1', 'wb_ops_stage2', 'wb_ops_stage2_patch', 'cs_stage1', 'cs_stage2', 'approval_flow', 'qa_runner', 'design_chief', 'rop_chief', 'fulfillment_chief', 'procurement_chief', 'wb_sync'],
           timestamp: new Date().toISOString(),
         });
       }
@@ -133,6 +135,8 @@ export default {
 
       // 4. WB agent routes
       if (pathname.startsWith('/agent/wb/')) {
+        const rs = await handleWbSyncRoutes_(env, request);
+        if (rs) return rs;
         const r = await handleWbStage2Routes_(env, request);
         if (r) return r;
         const r2 = await handleWbAgentRoutes_(env, request);

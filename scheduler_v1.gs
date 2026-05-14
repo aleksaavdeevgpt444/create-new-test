@@ -44,6 +44,8 @@ const SCHEDULES = {
   QA_DAILY:             '0 4 * * *',
   // Proposal expiry cleanup at 03:00 UTC
   PROPOSAL_CLEANUP:     '0 3 * * *',
+  // WB data sync at 04:30 UTC — after QA (04:00), before WB chief (05:00)
+  WB_DATA_SYNC:         '30 4 * * *',
 };
 
 // Map job names to their handler functions (populated below after function definitions)
@@ -532,6 +534,21 @@ async function runProcurementDailyJob_(env) {
   }
 }
 
+async function runWbDataSyncCronJob_(env) {
+  try {
+    if (typeof runWbSyncJob_ === 'function') {
+      return await runWbSyncJob_(env);
+    }
+    return { status: 'skipped', reason: 'runWbSyncJob_ not available' };
+  } catch (e) {
+    await wbLog_(env.DB, {
+      event_type: 'wb_data_sync_error',
+      details_json: JSON.stringify({ error: String(e) }),
+    });
+    throw e;
+  }
+}
+
 // Populate job registry after all handlers are defined
 Object.assign(JOB_REGISTRY, {
   wb_daily_report:     (env) => runWbDailyReportJob_(env),
@@ -544,6 +561,7 @@ Object.assign(JOB_REGISTRY, {
   weekly_insights:     (env) => runWeeklyInsightsJob_(env),
   qa_daily:            (env) => runQaDailyJob_(env),
   proposal_cleanup:    (env) => runProposalCleanupJob_(env),
+  wb_data_sync:        (env) => runWbDataSyncCronJob_(env),
 });
 
 // Map SCHEDULES cron strings to their canonical job names
@@ -558,6 +576,7 @@ const CRON_TO_JOB = {
   [SCHEDULES.WEEKLY_INSIGHTS]:     'weekly_insights',
   [SCHEDULES.QA_DAILY]:            'qa_daily',
   [SCHEDULES.PROPOSAL_CLEANUP]:    'proposal_cleanup',
+  [SCHEDULES.WB_DATA_SYNC]:        'wb_data_sync',
 };
 
 // ---------------------------------------------------------------------------
@@ -635,6 +654,12 @@ async function handleScheduledEvent_(event, env, ctx) {
     case SCHEDULES.WEEKLY_INSIGHTS:
       ctx.waitUntil(
         runScheduledJob_(env, 'weekly_insights', event.cron, () => runWeeklyInsightsJob_(env))
+      );
+      break;
+
+    case SCHEDULES.WB_DATA_SYNC:
+      ctx.waitUntil(
+        runScheduledJob_(env, 'wb_data_sync', event.cron, () => runWbDataSyncCronJob_(env))
       );
       break;
 

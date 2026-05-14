@@ -495,6 +495,23 @@ CREATE TABLE IF NOT EXISTS wb_report_consistency_check_v2 (
 CREATE INDEX IF NOT EXISTS idx_wb_consistency_v2_date
   ON wb_report_consistency_check_v2(date, check_type);
 
+-- wb_sync_log — WB data synchronisation run history (wb_sync_v1.gs)
+CREATE TABLE IF NOT EXISTS wb_sync_log (
+  id              TEXT PRIMARY KEY,
+  sync_date       TEXT NOT NULL,
+  sync_type       TEXT NOT NULL,
+  status          TEXT DEFAULT 'running',
+  started_at      TEXT NOT NULL,
+  finished_at     TEXT,
+  duration_ms     INTEGER,
+  records_written INTEGER DEFAULT 0,
+  error           TEXT,
+  created_at      TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_wb_sync_log_date
+  ON wb_sync_log(sync_date, sync_type);
+
 -- ============================================================
 -- §4 — CS Operations Stage 1 (cs_operations_stage1_v1.gs)
 --      Stage 2 ALTER TABLE columns are pre-merged below.
