@@ -20,6 +20,8 @@
  *   wb_operations_stage2_patch.gs
  *   cs_operations_stage1_v1.gs
  *   cs_operations_stage2_v1.gs
+ *   approval_flow_v1.gs
+ *   qa_runner_v1.gs
  */
 
 // ---------------------------------------------------------------------------
@@ -51,17 +53,20 @@ async function handleTelegramUpdate(update, request, env) {
     const chatId = msg.chat?.id;
     const userId = msg.from?.id;
 
-    if (await routeWbTelegramCommandV2_(env, msg, chatId, userId)) return jsonResponse({ ok: true });
-    if (await routeWbTelegramCommand_(env, msg, chatId, userId))   return jsonResponse({ ok: true });
-    if (await routeCsTelegramCommandV2_(env, msg, chatId, userId)) return jsonResponse({ ok: true });
-    if (await routeCsTelegramCommand_(env, msg, chatId, userId))   return jsonResponse({ ok: true });
+    if (await routeWbTelegramCommandV2_(env, msg, chatId, userId))   return jsonResponse({ ok: true });
+    if (await routeWbTelegramCommand_(env, msg, chatId, userId))     return jsonResponse({ ok: true });
+    if (await routeCsTelegramCommandV2_(env, msg, chatId, userId))   return jsonResponse({ ok: true });
+    if (await routeCsTelegramCommand_(env, msg, chatId, userId))     return jsonResponse({ ok: true });
+    if (await routeApprovalTelegramCommand_(env, msg, chatId, userId)) return jsonResponse({ ok: true });
+    if (await routeQaTelegramCommand_(env, msg, chatId, userId))     return jsonResponse({ ok: true });
   }
 
   if (update.callback_query) {
     const cq = update.callback_query;
-    if (await routeWbCallbackQuery_(env, cq))     return jsonResponse({ ok: true });
-    if (await routeCsCallbackQueryV2_(env, cq))   return jsonResponse({ ok: true });
-    if (await routeCsCallbackQuery_(env, cq))     return jsonResponse({ ok: true });
+    if (await routeApprovalCallbackQuery_(env, cq))  return jsonResponse({ ok: true });
+    if (await routeWbCallbackQuery_(env, cq))         return jsonResponse({ ok: true });
+    if (await routeCsCallbackQueryV2_(env, cq))       return jsonResponse({ ok: true });
+    if (await routeCsCallbackQuery_(env, cq))         return jsonResponse({ ok: true });
   }
 
   // Fallback: reconstruct a readable Request so the agent handler can parse it
@@ -93,7 +98,7 @@ export default {
         return jsonResponse({
           ok: true,
           build: 'ai_helpers_worker_v1',
-          modules: ['stage336_349', 'wb_ops_stage1', 'wb_ops_stage2', 'wb_ops_stage2_patch', 'cs_stage1', 'cs_stage2'],
+          modules: ['stage336_349', 'wb_ops_stage1', 'wb_ops_stage2', 'wb_ops_stage2_patch', 'cs_stage1', 'cs_stage2', 'approval_flow', 'qa_runner'],
           timestamp: new Date().toISOString(),
         });
       }
@@ -124,7 +129,19 @@ export default {
         if (r2) return r2;
       }
 
-      // 6-10. Specific agent API routes
+      // 6. Approval flow routes
+      if (pathname.startsWith('/agent/proposals/')) {
+        const r = await handleApprovalFlowRoutes_(env, request);
+        if (r) return r;
+      }
+
+      // 7. QA routes
+      if (pathname.startsWith('/agent/qa/')) {
+        const r = await handleQaRoutes_(env, request);
+        if (r) return r;
+      }
+
+      // 8-12. Specific agent API routes
       if (pathname === '/agent/hub/records/create') return handleAgentHubRecordCreateApi(request, env);
       if (pathname === '/agent/settings')           return handleAgentSettingsApi(request, env);
       if (pathname === '/agent/audit')              return handleAgentAuditLogApi(request, env);
