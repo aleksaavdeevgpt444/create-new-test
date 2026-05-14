@@ -22,6 +22,9 @@
  *   cs_operations_stage2_v1.gs
  *   approval_flow_v1.gs
  *   qa_runner_v1.gs
+ *   handoff_events_v1.gs
+ *   scheduler_v1.gs
+ *   wb_api_client_v1.gs   ← LAST: overrides WB/CS stubs with real API calls
  */
 
 // ---------------------------------------------------------------------------
@@ -57,13 +60,16 @@ async function handleTelegramUpdate(update, request, env) {
     if (await routeWbTelegramCommand_(env, msg, chatId, userId))     return jsonResponse({ ok: true });
     if (await routeCsTelegramCommandV2_(env, msg, chatId, userId))   return jsonResponse({ ok: true });
     if (await routeCsTelegramCommand_(env, msg, chatId, userId))     return jsonResponse({ ok: true });
-    if (await routeApprovalTelegramCommand_(env, msg, chatId, userId)) return jsonResponse({ ok: true });
-    if (await routeQaTelegramCommand_(env, msg, chatId, userId))     return jsonResponse({ ok: true });
+    if (await routeApprovalTelegramCommand_(env, msg, chatId, userId))  return jsonResponse({ ok: true });
+    if (await routeHandoffTelegramCommand_(env, msg, chatId, userId))  return jsonResponse({ ok: true });
+    if (await routeSchedulerTelegramCommand_(env, msg, chatId, userId)) return jsonResponse({ ok: true });
+    if (await routeQaTelegramCommand_(env, msg, chatId, userId))       return jsonResponse({ ok: true });
   }
 
   if (update.callback_query) {
     const cq = update.callback_query;
     if (await routeApprovalCallbackQuery_(env, cq))  return jsonResponse({ ok: true });
+    if (await routeHandoffCallbackQuery_(env, cq))   return jsonResponse({ ok: true });
     if (await routeWbCallbackQuery_(env, cq))         return jsonResponse({ ok: true });
     if (await routeCsCallbackQueryV2_(env, cq))       return jsonResponse({ ok: true });
     if (await routeCsCallbackQuery_(env, cq))         return jsonResponse({ ok: true });
@@ -141,7 +147,25 @@ export default {
         if (r) return r;
       }
 
-      // 8-12. Specific agent API routes
+      // 8. Handoff routes
+      if (pathname.startsWith('/agent/handoffs')) {
+        const r = await handleHandoffRoutes_(env, request);
+        if (r) return r;
+      }
+
+      // 9. Scheduler routes
+      if (pathname.startsWith('/agent/scheduler/')) {
+        const r = await handleSchedulerRoutes_(env, request);
+        if (r) return r;
+      }
+
+      // 10. WB API client routes
+      if (pathname.startsWith('/agent/wb/api/')) {
+        const r = await handleWbApiClientRoutes_(env, request);
+        if (r) return r;
+      }
+
+      // 11-15. Specific agent API routes
       if (pathname === '/agent/hub/records/create') return handleAgentHubRecordCreateApi(request, env);
       if (pathname === '/agent/settings')           return handleAgentSettingsApi(request, env);
       if (pathname === '/agent/audit')              return handleAgentAuditLogApi(request, env);
@@ -160,9 +184,6 @@ export default {
   // Scheduled handler (cron triggers)
   // -------------------------------------------------------------------------
   async scheduled(event, env, ctx) {
-    // Placeholder for future cron jobs.
-    // e.g. daily WB operations report at 06:00 Athens time:
-    // ctx.waitUntil(runWbOperationsChiefV2_(env, null, 'scheduled'));
-    console.log('Scheduled event fired:', event.cron);
+    ctx.waitUntil(handleScheduledEvent_(event, env, ctx));
   },
 };
