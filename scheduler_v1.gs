@@ -23,18 +23,25 @@
 // ---------------------------------------------------------------------------
 
 const SCHEDULES = {
-  // Daily WB Operations Chief at 05:00 UTC (08:00 Athens in winter, 08:00 in summer with DST)
-  WB_DAILY_REPORT:   '0 5 * * *',
+  // Daily WB Operations Chief at 05:00 UTC
+  WB_DAILY_REPORT:      '0 5 * * *',
+  // Daily Fulfillment Chief at 06:00 UTC (after WB, before CS)
+  FULFILLMENT_DAILY:    '0 6 * * *',
   // Daily CS Chief at 07:00 UTC
-  CS_DAILY_REPORT:   '0 7 * * *',
+  CS_DAILY_REPORT:      '0 7 * * *',
+  // Daily ROP Chief at 08:00 UTC
+  ROP_DAILY_REPORT:     '0 8 * * *',
+  // Daily Design Chief at 09:00 UTC
+  DESIGN_DAILY_REPORT:  '0 9 * * *',
   // Hourly pending proposals check (sends digest if >=5 pending)
-  PROPOSALS_CHECK:   '0 * * * *',
-  // Weekly insights on Monday 06:00 UTC
-  WEEKLY_INSIGHTS:   '0 6 * * 1',
+  PROPOSALS_CHECK:      '0 * * * *',
+  // Weekly insights on Monday 06:00 UTC — NOTE: conflicts with FULFILLMENT_DAILY on Monday
+  // so weekly_insights runs at 06:30 on Mondays (use separate cron)
+  WEEKLY_INSIGHTS:      '30 6 * * 1',
   // Daily QA check at 04:00 UTC (before reports run)
-  QA_DAILY:          '0 4 * * *',
+  QA_DAILY:             '0 4 * * *',
   // Proposal expiry cleanup at 03:00 UTC
-  PROPOSAL_CLEANUP:  '0 3 * * *',
+  PROPOSAL_CLEANUP:     '0 3 * * *',
 };
 
 // Map job names to their handler functions (populated below after function definitions)
@@ -463,24 +470,75 @@ async function runProposalCleanupJob_(env) {
   return { expired_count: expiredCount };
 }
 
+async function runFulfillmentDailyJob_(env) {
+  try {
+    if (typeof runFulfillmentChief_ === 'function') {
+      return await runFulfillmentChief_(env);
+    }
+    return { status: 'skipped', reason: 'runFulfillmentChief_ not available' };
+  } catch (e) {
+    await wbLog_(env.DB, {
+      event_type: 'fulfillment_daily_error',
+      details_json: JSON.stringify({ error: String(e) }),
+    });
+    throw e;
+  }
+}
+
+async function runRopDailyJob_(env) {
+  try {
+    if (typeof runRopChief_ === 'function') {
+      return await runRopChief_(env);
+    }
+    return { status: 'skipped', reason: 'runRopChief_ not available' };
+  } catch (e) {
+    await wbLog_(env.DB, {
+      event_type: 'rop_daily_error',
+      details_json: JSON.stringify({ error: String(e) }),
+    });
+    throw e;
+  }
+}
+
+async function runDesignDailyJob_(env) {
+  try {
+    if (typeof runDesignChief_ === 'function') {
+      return await runDesignChief_(env);
+    }
+    return { status: 'skipped', reason: 'runDesignChief_ not available' };
+  } catch (e) {
+    await wbLog_(env.DB, {
+      event_type: 'design_daily_error',
+      details_json: JSON.stringify({ error: String(e) }),
+    });
+    throw e;
+  }
+}
+
 // Populate job registry after all handlers are defined
 Object.assign(JOB_REGISTRY, {
-  wb_daily_report:  (env) => runWbDailyReportJob_(env),
-  cs_daily_report:  (env) => runCsDailyReportJob_(env),
-  proposals_check:  (env) => runProposalsCheckJob_(env),
-  weekly_insights:  (env) => runWeeklyInsightsJob_(env),
-  qa_daily:         (env) => runQaDailyJob_(env),
-  proposal_cleanup: (env) => runProposalCleanupJob_(env),
+  wb_daily_report:     (env) => runWbDailyReportJob_(env),
+  fulfillment_daily:   (env) => runFulfillmentDailyJob_(env),
+  cs_daily_report:     (env) => runCsDailyReportJob_(env),
+  rop_daily_report:    (env) => runRopDailyJob_(env),
+  design_daily_report: (env) => runDesignDailyJob_(env),
+  proposals_check:     (env) => runProposalsCheckJob_(env),
+  weekly_insights:     (env) => runWeeklyInsightsJob_(env),
+  qa_daily:            (env) => runQaDailyJob_(env),
+  proposal_cleanup:    (env) => runProposalCleanupJob_(env),
 });
 
 // Map SCHEDULES cron strings to their canonical job names
 const CRON_TO_JOB = {
-  [SCHEDULES.WB_DAILY_REPORT]:  'wb_daily_report',
-  [SCHEDULES.CS_DAILY_REPORT]:  'cs_daily_report',
-  [SCHEDULES.PROPOSALS_CHECK]:  'proposals_check',
-  [SCHEDULES.WEEKLY_INSIGHTS]:  'weekly_insights',
-  [SCHEDULES.QA_DAILY]:         'qa_daily',
-  [SCHEDULES.PROPOSAL_CLEANUP]: 'proposal_cleanup',
+  [SCHEDULES.WB_DAILY_REPORT]:     'wb_daily_report',
+  [SCHEDULES.FULFILLMENT_DAILY]:   'fulfillment_daily',
+  [SCHEDULES.CS_DAILY_REPORT]:     'cs_daily_report',
+  [SCHEDULES.ROP_DAILY_REPORT]:    'rop_daily_report',
+  [SCHEDULES.DESIGN_DAILY_REPORT]: 'design_daily_report',
+  [SCHEDULES.PROPOSALS_CHECK]:     'proposals_check',
+  [SCHEDULES.WEEKLY_INSIGHTS]:     'weekly_insights',
+  [SCHEDULES.QA_DAILY]:            'qa_daily',
+  [SCHEDULES.PROPOSAL_CLEANUP]:    'proposal_cleanup',
 };
 
 // ---------------------------------------------------------------------------
@@ -519,9 +577,27 @@ async function handleScheduledEvent_(event, env, ctx) {
       );
       break;
 
+    case SCHEDULES.FULFILLMENT_DAILY:
+      ctx.waitUntil(
+        runScheduledJob_(env, 'fulfillment_daily', event.cron, () => runFulfillmentDailyJob_(env))
+      );
+      break;
+
     case SCHEDULES.CS_DAILY_REPORT:
       ctx.waitUntil(
         runScheduledJob_(env, 'cs_daily_report', event.cron, () => runCsDailyReportJob_(env))
+      );
+      break;
+
+    case SCHEDULES.ROP_DAILY_REPORT:
+      ctx.waitUntil(
+        runScheduledJob_(env, 'rop_daily_report', event.cron, () => runRopDailyJob_(env))
+      );
+      break;
+
+    case SCHEDULES.DESIGN_DAILY_REPORT:
+      ctx.waitUntil(
+        runScheduledJob_(env, 'design_daily_report', event.cron, () => runDesignDailyJob_(env))
       );
       break;
 

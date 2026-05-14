@@ -13,6 +13,7 @@
 // GET  feedbacks-api.wb.ru/api/v1/feedbacks                       ← loadWbReviews_
 // GET  feedbacks-api.wb.ru/api/v1/questions                       ← loadWbQuestions_
 // GET  marketplace-api.wb.ru/api/v3/warehouses                    ← loadWbStockData_ (warehouses)
+// GET  marketplace-api.wb.ru/api/v3/returns                       ← loadWbReturns_
 // POST discounts-prices-api.wb.ru/api/v2/list/goods/filter        ← loadWbPricesAndDiscounts_
 // GET  marketplace-api.wb.ru/api/v3/tariffs/commission            ← loadWbCommissions_
 //
@@ -471,7 +472,66 @@ async function loadWbCommissions_(env) {
   }
 }
 
-// ── Section 8: API health check ───────────────────────────────
+// ── Section 8: Returns loader (overrides CS Stage 1 stub) ────
+
+async function loadWbReturns_(env, date) {
+  if (!env.WB_API_TOKEN) return { data: [], source_status: 'missing' };
+
+  const token = env.WB_API_TOKEN;
+  const allReturns = [];
+  let pageNum = 1;
+  const LIMIT = 50;
+
+  try {
+    while (true) {
+      const res = await wbApiGet_(token, WB_API_BASE.MARKETPLACE, '/api/v3/returns', {
+        dateFrom: date,
+        dateTo:   date,
+        pageNum,
+        limit:    LIMIT,
+      });
+
+      if (!res.ok) {
+        await wbLog_(env.DB, {
+          event_type: 'wb_api_returns_error',
+          details_json: JSON.stringify({ error: res.error, status: res.status, page: pageNum }),
+        });
+        break;
+      }
+
+      const returns = Array.isArray(res.data?.returns) ? res.data.returns
+                    : (Array.isArray(res.data) ? res.data : []);
+      allReturns.push(...returns);
+
+      if (!res.data?.hasNext || returns.length < LIMIT) break;
+      pageNum++;
+      await wbApiDelay_();
+    }
+
+    const data = allReturns.map(r => ({
+      order_id:      String(r.orderId || r.id || ''),
+      nm_id:         r.nmId || r.nm_id || null,
+      vendor_code:   r.vendorCode || r.sa_name || '',
+      subject_name:  r.subjectName || r.subject || '',
+      barcode:       r.barcode || '',
+      warehouse_name: r.warehouseName || '',
+      quantity:      r.quantity || 1,
+      return_reason: r.returnReason || r.reason || '',
+      date:          (r.date || date).slice(0, 10),
+    }));
+
+    return { data, source_status: 'ready', returns_count: allReturns.length };
+
+  } catch (e) {
+    await wbLog_(env.DB, {
+      event_type: 'wb_api_returns_exception',
+      details_json: JSON.stringify({ error: String(e) }),
+    });
+    return { data: [], source_status: 'missing', error: String(e) };
+  }
+}
+
+// ── Section 10: API health check ─────────────────────────────
 
 async function checkWbApiHealth_(env) {
   const token_configured = !!env.WB_API_TOKEN;
@@ -504,7 +564,7 @@ async function checkWbApiHealth_(env) {
   }
 }
 
-// ── Section 9: API routes ─────────────────────────────────────
+// ── Section 11: API routes ────────────────────────────────────
 
 async function handleWbApiClientRoutes_(env, request) {
   const url = new URL(request.url);

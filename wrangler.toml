@@ -38,12 +38,15 @@ compatibility_flags = ["nodejs_compat"]
 # ---------------------------------------------------------------------------
 [triggers]
 crons = [
-  "0 3 * * *",   # 03:00 UTC — proposal_cleanup (expire old proposals)
-  "0 4 * * *",   # 04:00 UTC — qa_daily (system health check before reports)
-  "0 5 * * *",   # 05:00 UTC — wb_daily_report (WB Operations Chief)
-  "0 7 * * *",   # 07:00 UTC — cs_daily_report (CS Chief)
-  "0 * * * *",   # every hour — proposals_check (digest if >5 pending)
-  "0 6 * * 1",   # 06:00 UTC Monday — weekly_insights
+  "0 3 * * *",    # 03:00 UTC — proposal_cleanup (expire old proposals)
+  "0 4 * * *",    # 04:00 UTC — qa_daily (system health check before reports)
+  "0 5 * * *",    # 05:00 UTC — wb_daily_report (WB Operations Chief)
+  "0 6 * * *",    # 06:00 UTC — fulfillment_daily (Fulfillment Chief)
+  "0 7 * * *",    # 07:00 UTC — cs_daily_report (CS Chief)
+  "0 8 * * *",    # 08:00 UTC — rop_daily_report (ROP Chief)
+  "0 9 * * *",    # 09:00 UTC — design_daily_report (Design Chief)
+  "0 * * * *",    # every hour — proposals_check (digest if >5 pending)
+  "30 6 * * 1",   # 06:30 UTC Monday — weekly_insights (offset from fulfillment)
 ]
 
 # ---------------------------------------------------------------------------

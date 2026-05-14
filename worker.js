@@ -24,6 +24,9 @@
  *   qa_runner_v1.gs
  *   handoff_events_v1.gs
  *   scheduler_v1.gs
+ *   design_chief_v1.gs
+ *   rop_chief_v1.gs
+ *   fulfillment_chief_v1.gs
  *   wb_api_client_v1.gs   ← LAST: overrides WB/CS stubs with real API calls
  */
 
@@ -64,15 +67,21 @@ async function handleTelegramUpdate(update, request, env) {
     if (await routeHandoffTelegramCommand_(env, msg, chatId, userId))  return jsonResponse({ ok: true });
     if (await routeSchedulerTelegramCommand_(env, msg, chatId, userId)) return jsonResponse({ ok: true });
     if (await routeQaTelegramCommand_(env, msg, chatId, userId))       return jsonResponse({ ok: true });
+    if (await routeDesignTelegramCommand_(env, msg, chatId, userId))   return jsonResponse({ ok: true });
+    if (await routeRopTelegramCommand_(env, msg, chatId, userId))      return jsonResponse({ ok: true });
+    if (await routeFulfillmentTelegramCommand_(env, msg, chatId, userId)) return jsonResponse({ ok: true });
   }
 
   if (update.callback_query) {
     const cq = update.callback_query;
-    if (await routeApprovalCallbackQuery_(env, cq))  return jsonResponse({ ok: true });
-    if (await routeHandoffCallbackQuery_(env, cq))   return jsonResponse({ ok: true });
-    if (await routeWbCallbackQuery_(env, cq))         return jsonResponse({ ok: true });
-    if (await routeCsCallbackQueryV2_(env, cq))       return jsonResponse({ ok: true });
-    if (await routeCsCallbackQuery_(env, cq))         return jsonResponse({ ok: true });
+    if (await routeApprovalCallbackQuery_(env, cq))      return jsonResponse({ ok: true });
+    if (await routeHandoffCallbackQuery_(env, cq))        return jsonResponse({ ok: true });
+    if (await routeWbCallbackQuery_(env, cq))             return jsonResponse({ ok: true });
+    if (await routeDesignCallbackQuery_(env, cq))         return jsonResponse({ ok: true });
+    if (await routeRopCallbackQuery_(env, cq))            return jsonResponse({ ok: true });
+    if (await routeFulfillmentCallbackQuery_(env, cq))    return jsonResponse({ ok: true });
+    if (await routeCsCallbackQueryV2_(env, cq))           return jsonResponse({ ok: true });
+    if (await routeCsCallbackQuery_(env, cq))             return jsonResponse({ ok: true });
   }
 
   // Fallback: reconstruct a readable Request so the agent handler can parse it
@@ -104,7 +113,7 @@ export default {
         return jsonResponse({
           ok: true,
           build: 'ai_helpers_worker_v1',
-          modules: ['stage336_349', 'wb_ops_stage1', 'wb_ops_stage2', 'wb_ops_stage2_patch', 'cs_stage1', 'cs_stage2', 'approval_flow', 'qa_runner'],
+          modules: ['stage336_349', 'wb_ops_stage1', 'wb_ops_stage2', 'wb_ops_stage2_patch', 'cs_stage1', 'cs_stage2', 'approval_flow', 'qa_runner', 'design_chief', 'rop_chief', 'fulfillment_chief'],
           timestamp: new Date().toISOString(),
         });
       }
@@ -165,14 +174,32 @@ export default {
         if (r) return r;
       }
 
-      // 11-15. Specific agent API routes
+      // 11. Design Chief routes
+      if (pathname.startsWith('/agent/design/')) {
+        const r = await handleDesignRoutes_(env, request);
+        if (r) return r;
+      }
+
+      // 12. ROP Chief routes
+      if (pathname.startsWith('/agent/rop/')) {
+        const r = await handleRopRoutes_(env, request);
+        if (r) return r;
+      }
+
+      // 13. Fulfillment Chief routes
+      if (pathname.startsWith('/agent/fulfillment/')) {
+        const r = await handleFulfillmentRoutes_(env, request);
+        if (r) return r;
+      }
+
+      // 14-18. Specific agent API routes
       if (pathname === '/agent/hub/records/create') return handleAgentHubRecordCreateApi(request, env);
       if (pathname === '/agent/settings')           return handleAgentSettingsApi(request, env);
       if (pathname === '/agent/audit')              return handleAgentAuditLogApi(request, env);
       if (pathname === '/agent/weekly-insights')    return handleAgentWeeklyInsightsApi(request, env);
       if (pathname === '/agent/proposals/status')   return handleAgentProposalStatusApi(request, env);
 
-      // 11. 404 fallback
+      // 19. 404 fallback
       return jsonResponse({ ok: false, error: 'Not found', path: pathname }, 404);
 
     } catch (err) {
