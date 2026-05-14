@@ -512,6 +512,54 @@ CREATE TABLE IF NOT EXISTS wb_sync_log (
 CREATE INDEX IF NOT EXISTS idx_wb_sync_log_date
   ON wb_sync_log(sync_date, sync_type);
 
+-- wb_pricing_proposal — price & discount change proposals (wb_pricing_v1.gs)
+CREATE TABLE IF NOT EXISTS wb_pricing_proposal (
+  id                    TEXT PRIMARY KEY,
+  proposal_date         TEXT NOT NULL,
+  nm_id                 INTEGER NOT NULL,
+  vendor_code           TEXT,
+  sku_title             TEXT,
+  proposal_type         TEXT NOT NULL,
+  current_price         REAL,
+  proposed_price        REAL,
+  current_discount_pct  REAL,
+  proposed_discount_pct REAL,
+  margin_pct_estimated  REAL,
+  rationale             TEXT,
+  ai_analysis           TEXT,
+  priority              TEXT DEFAULT 'medium',
+  status                TEXT DEFAULT 'pending',
+  confirmation_id       TEXT UNIQUE,
+  requires_confirmation INTEGER DEFAULT 1,
+  confirmed_at          TEXT,
+  confirmed_by          TEXT,
+  expires_at            TEXT,
+  created_at            TEXT DEFAULT (datetime('now')),
+  updated_at            TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_wb_pricing_proposal_date
+  ON wb_pricing_proposal(proposal_date, status);
+CREATE INDEX IF NOT EXISTS idx_wb_pricing_proposal_nm
+  ON wb_pricing_proposal(nm_id, status);
+
+-- wb_pricing_history — daily price snapshots per nm_id
+CREATE TABLE IF NOT EXISTS wb_pricing_history (
+  id           TEXT PRIMARY KEY,
+  nm_id        INTEGER NOT NULL,
+  vendor_code  TEXT,
+  record_date  TEXT NOT NULL,
+  price        REAL,
+  discount_pct REAL,
+  source       TEXT DEFAULT 'sync',
+  proposal_id  TEXT,
+  created_at   TEXT DEFAULT (datetime('now')),
+  UNIQUE(nm_id, record_date, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wb_pricing_history_nm
+  ON wb_pricing_history(nm_id, record_date DESC);
+
 -- ============================================================
 -- §4 — CS Operations Stage 1 (cs_operations_stage1_v1.gs)
 --      Stage 2 ALTER TABLE columns are pre-merged below.

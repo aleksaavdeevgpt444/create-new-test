@@ -502,6 +502,57 @@ CREATE INDEX IF NOT EXISTS idx_wb_sync_log_date
 INSERT OR IGNORE INTO scheduler_config (id, job_name) VALUES
   ('scfg_wb_sync', 'wb_data_sync');
 
+-- ── §21–22 WB Pricing Advisor ─────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS wb_pricing_proposal (
+  id                    TEXT PRIMARY KEY,
+  proposal_date         TEXT NOT NULL,
+  nm_id                 INTEGER NOT NULL,
+  vendor_code           TEXT,
+  sku_title             TEXT,
+  proposal_type         TEXT NOT NULL,
+  current_price         REAL,
+  proposed_price        REAL,
+  current_discount_pct  REAL,
+  proposed_discount_pct REAL,
+  margin_pct_estimated  REAL,
+  rationale             TEXT,
+  ai_analysis           TEXT,
+  priority              TEXT DEFAULT 'medium',
+  status                TEXT DEFAULT 'pending',
+  confirmation_id       TEXT UNIQUE,
+  requires_confirmation INTEGER DEFAULT 1,
+  confirmed_at          TEXT,
+  confirmed_by          TEXT,
+  expires_at            TEXT,
+  created_at            TEXT DEFAULT (datetime('now')),
+  updated_at            TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_wb_pricing_proposal_date
+  ON wb_pricing_proposal(proposal_date, status);
+CREATE INDEX IF NOT EXISTS idx_wb_pricing_proposal_nm
+  ON wb_pricing_proposal(nm_id, status);
+
+CREATE TABLE IF NOT EXISTS wb_pricing_history (
+  id           TEXT PRIMARY KEY,
+  nm_id        INTEGER NOT NULL,
+  vendor_code  TEXT,
+  record_date  TEXT NOT NULL,
+  price        REAL,
+  discount_pct REAL,
+  source       TEXT DEFAULT 'sync',
+  proposal_id  TEXT,
+  created_at   TEXT DEFAULT (datetime('now')),
+  UNIQUE(nm_id, record_date, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wb_pricing_history_nm
+  ON wb_pricing_history(nm_id, record_date DESC);
+
+INSERT OR IGNORE INTO scheduler_config (id, job_name) VALUES
+  ('scfg_pricing', 'wb_pricing_daily');
+
 -- ── End of migration.sql ──────────────────────────────────────
--- New tables added: 20 | New indexes: 21
+-- New tables added: 22 | New indexes: 24
 -- ALTER TABLE patches are handled automatically by Worker startup.
