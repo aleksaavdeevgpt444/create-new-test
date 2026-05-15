@@ -549,10 +549,14 @@ async function runWbDataSync_(env) {
   await run('avg_daily',   () => wbSyncAvgDaily_(env, syncDate));
 
   // Steps 3–5 can run in parallel (independent API sources)
+  // Step 7: returns data runs in parallel alongside steps 3–5
   await Promise.all([
     run('sku_metrics', () => wbSyncSkuMetrics_(env, syncDate)),
     run('cards',       () => wbSyncCardContent_(env, syncDate)),
     run('cost_data',   () => wbSyncCostData_(env, syncDate)),
+    run('returns',     () => typeof wbSyncReturnsData_ === 'function'
+      ? wbSyncReturnsData_(env, syncDate)
+      : Promise.resolve({ ok: true, records_written: 0, source_status: 'skipped' })),
   ]);
 
   // Step 6 is derived from the results of steps 1–2

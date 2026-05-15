@@ -8,7 +8,7 @@
 //
 // ── Checks performed ─────────────────────────────────────────
 //
-// SECTION 1 — Table existence (50 tables, 1 optional)
+// SECTION 1 — Table existence (52 tables, 1 optional)
 //   agent_incoming_messages, agent_proposals, agent_settings,
 //   agent_audit_log,
 //   wb_daily_snapshot, wb_sku_snapshot, wb_ads_snapshot,
@@ -159,7 +159,9 @@ const QA_REQUIRED_TABLES = [
   'alert_log',
   // §17 Analytics
   'wb_analytics_run',
-  // §18 Ads Chief (reads wb_ads_snapshot — no new table needed)
+  // §18 Returns Analysis
+  'wb_returns_log',
+  'wb_returns_summary',
 ];
 
 const QA_OPTIONAL_TABLES = [

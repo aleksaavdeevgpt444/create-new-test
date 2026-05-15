@@ -35,6 +35,7 @@
  *   alerts_v1.gs          ← Real-time alert system
  *   wb_analytics_v1.gs    ← Week-over-week business analytics
  *   wb_ads_chief_v1.gs    ← Advertising campaign analytics
+ *   wb_returns_v1.gs      ← Returns analysis & reason tracking
  *   wb_api_client_v1.gs   ← LAST: overrides WB/CS stubs with real API calls
  */
 
@@ -86,6 +87,7 @@ async function handleTelegramUpdate(update, request, env) {
     if (await routeAlertsCommand_(env, msg, chatId, userId))              return jsonResponse({ ok: true });
     if (await routeAnalyticsTelegramCommand_(env, msg, chatId, userId))   return jsonResponse({ ok: true });
     if (await routeAdsTelegramCommand_(env, msg, chatId, userId))         return jsonResponse({ ok: true });
+    if (await routeReturnsTelegramCommand_(env, msg, chatId, userId))     return jsonResponse({ ok: true });
   }
 
   if (update.callback_query) {
@@ -131,7 +133,7 @@ export default {
         return jsonResponse({
           ok: true,
           build: 'ai_helpers_worker_v1',
-          modules: ['stage336_349', 'wb_ops_stage1', 'wb_ops_stage2', 'wb_ops_stage2_patch', 'cs_stage1', 'cs_stage2', 'approval_flow', 'qa_runner', 'design_chief', 'rop_chief', 'fulfillment_chief', 'procurement_chief', 'wb_sync', 'wb_pricing', 'supplier_mgmt', 'bot_setup', 'alerts', 'wb_analytics', 'wb_ads_chief', 'wb_api_client'],
+          modules: ['stage336_349', 'wb_ops_stage1', 'wb_ops_stage2', 'wb_ops_stage2_patch', 'cs_stage1', 'cs_stage2', 'approval_flow', 'qa_runner', 'design_chief', 'rop_chief', 'fulfillment_chief', 'procurement_chief', 'wb_sync', 'wb_pricing', 'supplier_mgmt', 'bot_setup', 'alerts', 'wb_analytics', 'wb_ads_chief', 'wb_returns', 'wb_api_client'],
           timestamp: new Date().toISOString(),
         });
       }
@@ -251,6 +253,12 @@ export default {
       // 20. Ads Chief routes
       if (pathname.startsWith('/agent/ads')) {
         const r = await handleAdsChiefRoutes_(env, request);
+        if (r) return r;
+      }
+
+      // 21. Returns routes
+      if (pathname.startsWith('/agent/returns')) {
+        const r = await handleReturnsRoutes_(env, request);
         if (r) return r;
       }
 

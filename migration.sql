@@ -638,3 +638,38 @@ CREATE TABLE IF NOT EXISTS wb_analytics_run (
 
 CREATE INDEX IF NOT EXISTS idx_wb_analytics_run_period
   ON wb_analytics_run(period_start, period_type);
+
+-- ── §27-28 WB Returns (wb_returns_v1.gs) ──────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS wb_returns_log (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  date           TEXT NOT NULL,
+  nm_id          TEXT,
+  vendor_code    TEXT,
+  order_id       TEXT NOT NULL DEFAULT '',
+  barcode        TEXT,
+  subject_name   TEXT,
+  warehouse_name TEXT,
+  return_reason  TEXT,
+  quantity       INTEGER DEFAULT 1,
+  created_at     TEXT DEFAULT (datetime('now')),
+  UNIQUE(date, nm_id, order_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wb_returns_log_date   ON wb_returns_log(date, nm_id);
+CREATE INDEX IF NOT EXISTS idx_wb_returns_log_reason ON wb_returns_log(return_reason, date);
+
+CREATE TABLE IF NOT EXISTS wb_returns_summary (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  date             TEXT NOT NULL,
+  nm_id            TEXT NOT NULL,
+  vendor_code      TEXT,
+  total_returns    INTEGER DEFAULT 0,
+  dominant_reason  TEXT,
+  reason_breakdown TEXT,
+  return_rate      REAL,
+  updated_at       TEXT DEFAULT (datetime('now')),
+  UNIQUE(date, nm_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wb_returns_summary_date ON wb_returns_summary(date, nm_id);
