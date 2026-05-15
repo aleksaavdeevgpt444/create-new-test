@@ -12722,8 +12722,18 @@ async function handleTaskRecurrenceApplyFollowingApi(request, env) {
     if (has('duration_minutes'))  contentEdits.durationMinutes = body.duration_minutes;
     if (has('space_key'))         contentEdits.spaceKey = body.space_key;
 
+    // Delta-offset: if due_at changes, shift following tasks' due_at by the same delta
+    let dueDeltaMs = 0;
+    if (has('due_at') && body.due_at && task.due_at) {
+      const nextDueMs = new Date(body.due_at).getTime();
+      const prevDueMs = new Date(task.due_at).getTime();
+      if (Number.isFinite(nextDueMs) && Number.isFinite(prevDueMs)) {
+        dueDeltaMs = nextDueMs - prevDueMs;
+      }
+    }
+
     let updatedCount = 0;
-    if (seriesId && Object.keys(contentEdits).length) {
+    if (seriesId && (Object.keys(contentEdits).length || dueDeltaMs !== 0)) {
       const rows = await env.DB.prepare(`
         SELECT id FROM tasks
         WHERE user_id = ? AND recurrence_series_id = ? AND recurrence_index >= ?
@@ -12731,7 +12741,17 @@ async function handleTaskRecurrenceApplyFollowingApi(request, env) {
       `).bind(String(userId), seriesId, startIndex).all();
       const followingIds = (rows.results || []).map((r) => r.id);
       for (const fid of followingIds) {
-        await updateTaskMeta(env, { taskId: fid, userId: String(userId), ...contentEdits });
+        if (Object.keys(contentEdits).length) {
+          await updateTaskMeta(env, { taskId: fid, userId: String(userId), ...contentEdits });
+        }
+        // Apply due_at delta to all following tasks except the current one (handled separately)
+        if (dueDeltaMs !== 0 && fid !== taskId) {
+          const futureTask = await getTaskById(env, { taskId: fid, userId: String(userId) });
+          if (futureTask && futureTask.due_at) {
+            const shiftedDueAt = new Date(new Date(futureTask.due_at).getTime() + dueDeltaMs).toISOString();
+            await updateTaskSchedule(env, { taskId: fid, userId: String(userId), dueAt: shiftedDueAt });
+          }
+        }
         updatedCount++;
       }
     }
@@ -12779,21 +12799,25 @@ async function handleTaskRecurrenceDeleteCurrentApi(request, env) {
       return jsonResponse({ ok: false, error: 'task_id and user_id are required' }, { status: 400 });
     }
     const taskBefore = await getTaskById(env, { taskId, userId: String(userId) });
+    if (!taskBefore) return jsonResponse({ ok: false, error: 'Task not found' }, { status: 404 });
     await detachTaskFromRecurringSeries(env, { taskId, userId: String(userId) });
+    // Soft-delete: mark as canceled and clear schedule instead of physical deletion
+    await updateTaskSchedule(env, { taskId, userId: String(userId), dueAt: null, nextStatus: TASK_STATUSES.CANCELED });
     await addTaskHistory(env, {
       userId: String(userId),
       taskId,
       eventType: 'recurrence_delete_current_only',
       payload: {
         scope: 'current_only',
-        previous_series_id: taskBefore ? (taskBefore.recurrence_series_id || null) : null,
-        previous_recurrence_index: taskBefore ? getTaskRecurrenceIndex(taskBefore) : null,
-        title: taskBefore ? (taskBefore.title || null) : null,
+        soft_delete: true,
+        previous_series_id: taskBefore.recurrence_series_id || null,
+        previous_recurrence_index: getTaskRecurrenceIndex(taskBefore),
+        title: taskBefore.title || null,
       },
       createdAt: new Date().toISOString()
     });
-    await deleteSingleTaskRecord(env, { taskId, userId: String(userId) });
-    return jsonResponse({ ok: true, deleted: true, scope: 'current_only', task_id: taskId });
+    const canceledTask = await getTaskById(env, { taskId, userId: String(userId) });
+    return jsonResponse({ ok: true, deleted: true, scope: 'current_only', task_id: taskId, item: canceledTask });
   } catch (error) {
     return jsonResponse({ ok: false, error: String(error) }, { status: 500 });
   }
@@ -19235,6 +19259,17 @@ function buildWebAppHtml() {
       line-height: 1.45;
       margin-top: -6px;
     }
+    .settings-group-header {
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--text-soft, var(--muted));
+      font-size: 11px;
+      font-weight: 800;
+      padding-bottom: 6px;
+      margin-top: 28px;
+      border-bottom: 1px solid var(--border-soft, var(--border));
+    }
+    .settings-group-header:first-child { margin-top: 4px; }
     .settings-block-body {
       display: grid;
       gap: 12px;
@@ -25075,6 +25110,7 @@ function buildWebAppHtml() {
           </div>
 
           <div class="settings-page-grid">
+            <div class="settings-group-header">Основное</div>
             <section class="settings-block">
               <div class="settings-block-title">Сводка по статусам за неделю</div>
               <div class="settings-block-subtitle">Быстрый обзор активной недели по основным статусам.</div>
@@ -25133,6 +25169,7 @@ function buildWebAppHtml() {
               </div>
             </section>
 
+            <div class="settings-group-header">Внешний вид</div>
             <section class="settings-block">
               <div class="settings-block-title">Цветовая тема</div>
               <div class="settings-block-subtitle">Выбор активной темы planner для всех экранов и drawer.</div>
@@ -25165,6 +25202,7 @@ function buildWebAppHtml() {
               </div>
             </section>
 
+            <div class="settings-group-header">Поведение</div>
             <section class="settings-block">
               <div class="settings-block-title">Поведение planner</div>
               <div class="settings-block-subtitle">Базовые пользовательские настройки главного экрана и realtime-поведения.</div>
@@ -25200,6 +25238,7 @@ function buildWebAppHtml() {
               </div>
             </section>
 
+            <div class="settings-group-header">Ёмкость и Неделя</div>
             <section class="settings-block" id="capacitySettingsBlock">
               <div class="settings-block-title">Ёмкость и загрузка</div>
               <div class="settings-block-subtitle">Отдельный слой Capacity: можно задать реальную ёмкость дня, резерв времени и показать overflow без вмешательства в task model.</div>
@@ -25274,6 +25313,7 @@ function buildWebAppHtml() {
               </div>
             </section>
 
+            <div class="settings-group-header">Фокус</div>
             <section class="settings-block">
               <div class="settings-block-title">Фокус-режим</div>
               <div class="settings-block-subtitle">Параметры запуска фокуса без вмешательства в editor-логику и task schema.</div>
@@ -25341,6 +25381,7 @@ function buildWebAppHtml() {
               </div>
             </section>
 
+            <div class="settings-group-header">Риски и ритуалы</div>
             <section class="settings-block" id="riskSettingsBlock">
               <div class="settings-block-title">Риски и блокеры</div>
               <div class="settings-block-subtitle">Локальный слой Risk-Layer-1: можно отмечать блокеры, stalled-задачи и риск дедлайна без вмешательства в task schema и drawer.</div>
@@ -25446,6 +25487,7 @@ function buildWebAppHtml() {
             </section>
 
 
+            <div class="settings-group-header">Уведомления</div>
             <section class="settings-block" id="reminderSettingsBlock">
               <div class="settings-block-title">Уведомления и напоминания</div>
               <div class="settings-block-subtitle">Notifications + Reminder Layer: remind_at, центр напоминаний в Today, realtime-обновление и browser notifications без вмешательства в drawer.</div>
@@ -32221,19 +32263,26 @@ function hydrateTaskFrameworkAssignmentsFromServer() {
       }
 
       async function scheduleRecurringTaskWithScope(task, dueAtIso, nextStatus, durationMinutes, scope) {
-        scope = 'current';
         if (!task || !task.id) return;
         if (!state.userId) {
           showError('Сначала укажи user_id.');
           return;
         }
 
-        state.requestState = 'перенос-повтора-только-эта';
+        // If scope not pre-determined, ask user
+        if (!scope || scope === 'ask') {
+          var chosenApplyScope = await chooseRecurringApplyScope(task.title || '');
+          if (!chosenApplyScope || chosenApplyScope === 'cancel') return;
+          scope = chosenApplyScope;
+        }
+
+        var isCurrent = scope !== 'following';
+        state.requestState = isCurrent ? 'перенос-повтора-только-эта' : 'перенос-повтора-ветка';
         updateDebugInfo();
         showError('');
 
         var optimistic = buildOptimisticScheduledTask(task.id, dueAtIso, nextStatus, durationMinutes, {
-          detachSeries: scope === 'current'
+          detachSeries: isCurrent
         });
 
         try {
@@ -32247,10 +32296,12 @@ function hydrateTaskFrameworkAssignmentsFromServer() {
             body.duration_minutes = Number(durationMinutes);
           }
 
-          var response = await requestJson('/tasks/recurrence/apply-current', {
+          var endpoint = isCurrent ? '/tasks/recurrence/apply-current' : '/tasks/recurrence/apply-following';
+          var response = await requestJsonWithWriteResilience(endpoint, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(body)
+            body: JSON.stringify(body),
+            __meta: { requestName: 'recurrence-schedule-' + scope, retryCount: 1, retryDelayMs: 260 }
           });
 
           if (response && response.item) {
@@ -54663,7 +54714,11 @@ function hydrateTaskFrameworkAssignmentsFromServer() {
 
         if (rs.currentDuration !== rs.startDuration) {
           var resizeTask = findTaskById(rs.taskId);
-          scheduleTask(rs.taskId, rs.dueAt, getScheduleStatusForExistingTask(resizeTask), rs.currentDuration);
+          if (isRecurringCalendarTask(resizeTask)) {
+            scheduleRecurringTaskWithScope(resizeTask, rs.dueAt, getScheduleStatusForExistingTask(resizeTask), rs.currentDuration, 'ask');
+          } else {
+            scheduleTask(rs.taskId, rs.dueAt, getScheduleStatusForExistingTask(resizeTask), rs.currentDuration);
+          }
         } else {
           applyResizePreview(rs);
         }
