@@ -1,0 +1,8 @@
+# Local development secrets — copy to .dev.vars and fill in real values
+# DO NOT commit .dev.vars to git (it is gitignored)
+
+TELEGRAM_BOT_TOKEN=your-telegram-bot-token
+TELEGRAM_CHAT_ID=your-telegram-chat-id
+OPENAI_API_KEY=your-openai-api-key
+WB_API_TOKEN=your-wildberries-api-token
+GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"..."}

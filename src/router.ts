@@ -1,5 +1,10 @@
 // Main router — all API + UI routes for the AI Agents System
 import { Env, jsonResponse, htmlResponse, errorResponse, dbGuard, generateId, now, safeParseJSON } from './types';
+
+function isHtmlRequest(request: Request): boolean {
+  const accept = request.headers.get('accept') ?? '';
+  return accept.includes('text/html');
+}
 import { SCHEMA_SQL, SEED_AGENTS_SQL } from './db/schema';
 import { getAgents, getAgent, updateAgent, logAgentEvent } from './agents/registry';
 import { createAgentRequest, createHandoff } from './agents/core';
@@ -357,6 +362,24 @@ a{color:#60a5fa}h1{font-size:32px}</style></head>
     // APPROVALS
     // ============================================================
     if (path === '/agents/approvals' && method === 'GET') {
+      if (isHtmlRequest(request)) {
+        return renderSimplePage('Approval Center', db, env, async (db, env) => {
+          const approvals = db ? await getApprovals(db, 'pending') : [];
+          return `<p style="color:#64748b;margin-bottom:16px">Pending proposals awaiting your decision</p>
+          <div class="section"><h2 style="margin-top:0">Pending Approvals (${approvals.length})</h2>
+          ${approvals.length === 0 ? '<p class="empty">No pending approvals. ✅</p>' : `<table class="table"><thead><tr><th>Action Type</th><th>Agent</th><th>Risk</th><th>Proposal</th><th>Actions</th></tr></thead><tbody>
+          ${(approvals as Record<string,string>[]).map(a => `<tr>
+            <td><code>${a.action_type}</code></td>
+            <td><span class="tag">${a.agent_key}</span></td>
+            <td><span class="badge ${a.risk_level === 'high' || a.risk_level === 'critical' ? 'badge-red' : a.risk_level === 'medium' ? 'badge-yellow' : 'badge-green'}">${a.risk_level}</span></td>
+            <td style="font-size:13px">${(a.proposal_text ?? '').slice(0, 80)}</td>
+            <td><a href="#" onclick="fetch('/agents/approvals/${a.id}/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(()=>location.reload())" style="color:#86efac;margin-right:8px">✅ Approve</a>
+            <a href="#" onclick="fetch('/agents/approvals/${a.id}/reject',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(()=>location.reload())" style="color:#fca5a5">❌ Reject</a></td>
+          </tr>`).join('')}
+          </tbody></table>`}
+          </div>`;
+        });
+      }
       if (!db) return jsonResponse({ ok: true, approvals: [], warning: 'No DB' });
       const status = url.searchParams.get('status') ?? undefined;
       const approvals = await getApprovals(db, status);
@@ -418,6 +441,29 @@ a{color:#60a5fa}h1{font-size:32px}</style></head>
     // TOOLS
     // ============================================================
     if (path === '/agents/tools' && method === 'GET') {
+      if (isHtmlRequest(request)) {
+        return renderSimplePage('Tool Registry', db, env, async (db, env) => {
+          const tools = db ? await getTools(db) : [];
+          const byCategory: Record<string, Record<string,unknown>[]> = {};
+          for (const t of tools as Record<string,unknown>[]) {
+            const cat = t.category as string;
+            if (!byCategory[cat]) byCategory[cat] = [];
+            byCategory[cat].push(t);
+          }
+          return `<p style="color:#64748b;margin-bottom:16px">${tools.length} tools registered</p>
+          ${Object.entries(byCategory).map(([cat, items]) => `
+          <div class="section"><h2 style="margin-top:0">${cat} (${items.length})</h2>
+          <table class="table"><thead><tr><th>Key</th><th>Name</th><th>Risk</th><th>Enabled</th><th>Mock</th><th>Approval</th></tr></thead><tbody>
+          ${items.map(t => `<tr>
+            <td><code style="font-size:11px">${t.tool_key}</code></td><td style="font-size:13px">${t.name}</td>
+            <td><span class="badge ${(t.risk_level as string) === 'dangerous' ? 'badge-red' : (t.risk_level as string) === 'high' || (t.risk_level as string) === 'critical' ? 'badge-yellow' : 'badge-green'}">${t.risk_level}</span></td>
+            <td>${t.is_enabled ? '✅' : '🚫'}</td>
+            <td>${t.is_mock ? '📋' : '—'}</td>
+            <td>${t.requires_approval ? '🔐' : '—'}</td>
+          </tr>`).join('')}
+          </tbody></table></div>`).join('')}`;
+        });
+      }
       if (!db) return jsonResponse({ ok: true, tools: [], warning: 'No DB' });
       const tools = await getTools(db);
       return jsonResponse({ ok: true, tools });
@@ -655,50 +701,7 @@ a{color:#60a5fa}h1{font-size:32px}</style></head>
       });
     }
 
-    if (path === '/agents/approvals' && method === 'GET' && request.headers.get('accept')?.includes('text/html')) {
-      return renderSimplePage('Approval Center', db, env, async (db, env) => {
-        const approvals = db ? await getApprovals(db, 'pending') : [];
-        return `<p style="color:#64748b;margin-bottom:16px">Pending proposals awaiting your decision</p>
-        <div class="section"><h2 style="margin-top:0">Pending Approvals (${approvals.length})</h2>
-        ${approvals.length === 0 ? '<p class="empty">No pending approvals. ✅</p>' : `<table class="table"><thead><tr><th>Action Type</th><th>Agent</th><th>Risk</th><th>Proposal</th><th>Actions</th></tr></thead><tbody>
-        ${(approvals as Record<string,string>[]).map(a => `<tr>
-          <td><code>${a.action_type}</code></td>
-          <td><span class="tag">${a.agent_key}</span></td>
-          <td><span class="badge ${a.risk_level === 'high' || a.risk_level === 'critical' ? 'badge-red' : a.risk_level === 'medium' ? 'badge-yellow' : 'badge-green'}">${a.risk_level}</span></td>
-          <td style="font-size:13px">${(a.proposal_text ?? '').slice(0, 80)}</td>
-          <td><a href="#" onclick="fetch('/agents/approvals/${a.id}/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(()=>location.reload())" style="color:#86efac;margin-right:8px">✅ Approve</a>
-          <a href="#" onclick="fetch('/agents/approvals/${a.id}/reject',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(()=>location.reload())" style="color:#fca5a5">❌ Reject</a></td>
-        </tr>`).join('')}
-        </tbody></table>`}
-        </div>`;
-      });
-    }
-
-    if (path === '/agents/tools' && method === 'GET' && request.headers.get('accept')?.includes('text/html')) {
-      return renderSimplePage('Tool Registry', db, env, async (db, env) => {
-        const tools = db ? await getTools(db) : [];
-        const byCategory: Record<string, Record<string,unknown>[]> = {};
-        for (const t of tools as Record<string,unknown>[]) {
-          const cat = t.category as string;
-          if (!byCategory[cat]) byCategory[cat] = [];
-          byCategory[cat].push(t);
-        }
-        return `<p style="color:#64748b;margin-bottom:16px">${tools.length} tools registered</p>
-        ${Object.entries(byCategory).map(([cat, items]) => `
-        <div class="section"><h2 style="margin-top:0">${cat} (${items.length})</h2>
-        <table class="table"><thead><tr><th>Key</th><th>Name</th><th>Risk</th><th>Enabled</th><th>Mock</th><th>Approval</th></tr></thead><tbody>
-        ${items.map(t => `<tr>
-          <td><code style="font-size:11px">${t.tool_key}</code></td><td style="font-size:13px">${t.name}</td>
-          <td><span class="badge ${(t.risk_level as string) === 'dangerous' ? 'badge-red' : (t.risk_level as string) === 'high' || (t.risk_level as string) === 'critical' ? 'badge-yellow' : 'badge-green'}">${t.risk_level}</span></td>
-          <td>${t.is_enabled ? '✅' : '🚫'}</td>
-          <td>${t.is_mock ? '📋' : '—'}</td>
-          <td>${t.requires_approval ? '🔐' : '—'}</td>
-        </tr>`).join('')}
-        </tbody></table></div>`).join('')}`;
-      });
-    }
-
-    if (path === '/agents/security' && method === 'GET' && request.headers.get('accept')?.includes('text/html')) {
+    if (path === '/agents/security' && method === 'GET') {
       return renderSimplePage('Security & Audit', db, env, async (db, env) => {
         if (!db) return '<div class="alert">No database configured.</div>';
         const overview = await getSecurityOverview(db);
@@ -714,7 +717,7 @@ a{color:#60a5fa}h1{font-size:32px}</style></head>
       });
     }
 
-    if (path === '/agents/hardening' && method === 'GET' && request.headers.get('accept')?.includes('text/html')) {
+    if (path === '/agents/hardening' && method === 'GET') {
       return renderSimplePage('Production Hardening', db, env, async (db, env) => {
         if (!db) return '<div class="alert">No database configured.</div>';
         const overview = await getHardeningOverview(db);

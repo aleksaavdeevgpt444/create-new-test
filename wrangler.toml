@@ -11,9 +11,34 @@ database_id = "placeholder-replace-with-real-id"
 [vars]
 ENVIRONMENT = "development"
 
+# Cron triggers for the Advanced Scheduler (Stage A26)
+# Runs every 5 minutes to process due schedules, detect stuck runs, and send heartbeats
+[[triggers]]
+crons = ["*/5 * * * *"]
+
 # Secrets (set via `wrangler secret put`):
-# TELEGRAM_BOT_TOKEN
-# TELEGRAM_CHAT_ID
-# OPENAI_API_KEY
-# WB_API_TOKEN
-# GOOGLE_SERVICE_ACCOUNT_JSON
+# wrangler secret put TELEGRAM_BOT_TOKEN
+# wrangler secret put TELEGRAM_CHAT_ID
+# wrangler secret put OPENAI_API_KEY
+# wrangler secret put WB_API_TOKEN
+# wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON
+
+# Staging environment
+[env.staging]
+name = "ai-agents-system-staging"
+vars = { ENVIRONMENT = "staging" }
+
+[[env.staging.d1_databases]]
+binding = "AGENT_DB"
+database_name = "ai-agents-db-staging"
+database_id = "placeholder-replace-with-staging-id"
+
+# Production environment
+[env.production]
+name = "ai-agents-system-production"
+vars = { ENVIRONMENT = "production" }
+
+[[env.production.d1_databases]]
+binding = "AGENT_DB"
+database_name = "ai-agents-db-production"
+database_id = "placeholder-replace-with-production-id"
