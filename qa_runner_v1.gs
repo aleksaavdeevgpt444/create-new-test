@@ -8,7 +8,7 @@
 //
 // ── Checks performed ─────────────────────────────────────────
 //
-// SECTION 1 — Table existence (44 tables, 1 optional)
+// SECTION 1 — Table existence (49 tables, 1 optional)
 //   agent_incoming_messages, agent_proposals, agent_settings,
 //   agent_audit_log,
 //   wb_daily_snapshot, wb_sku_snapshot, wb_ads_snapshot,
@@ -29,9 +29,13 @@
 //   rop_kpi_snapshot, rop_target, rop_insight,
 //   fulfillment_fbs_snapshot, fulfillment_tz_item, fulfillment_schedule,
 //   procurement_order, procurement_handoff_item, procurement_price_history,
+//   wb_sync_log,
+//   wb_pricing_proposal, wb_pricing_history,
+//   bot_users,
+//   alert_config, alert_log,
 //   hub_records (optional)
 //
-// SECTION 2 — Schema column presence (13 tables, 37 columns)
+// SECTION 2 — Schema column presence (17 tables, 46 columns)
 //   wb_agent_proposals: confirmation_id, status,
 //     requires_confirmation, priority
 //   wb_agent_alerts: idempotency_key, alert_type, date
@@ -54,6 +58,11 @@
 //     requires_confirmation, status
 //   procurement_order: confirmation_id,
 //     requires_confirmation, status
+//   wb_pricing_proposal: confirmation_id,
+//     requires_confirmation, status
+//   wb_sync_log: status, sync_type
+//   alert_log: idempotency_key, alert_type
+//   bot_users: chat_id, user_id
 //
 // SECTION 3 — Data integrity (5 checks)
 //   1. No orphaned cs_draft_response rows
@@ -137,6 +146,16 @@ const QA_REQUIRED_TABLES = [
   'procurement_order',
   'procurement_handoff_item',
   'procurement_price_history',
+  // §13 WB Sync
+  'wb_sync_log',
+  // §14 WB Pricing
+  'wb_pricing_proposal',
+  'wb_pricing_history',
+  // §15 Bot Setup
+  'bot_users',
+  // §16 Alerts
+  'alert_config',
+  'alert_log',
 ];
 
 const QA_OPTIONAL_TABLES = [
@@ -166,6 +185,14 @@ const QA_SCHEMA_CHECKS = [
   { table: 'design_content_plan',     columns: ['confirmation_id', 'requires_confirmation', 'status'] },
   // Procurement Chief — safety-critical
   { table: 'procurement_order',       columns: ['confirmation_id', 'requires_confirmation', 'status'] },
+  // WB Pricing — all proposals must be confirmable
+  { table: 'wb_pricing_proposal',     columns: ['confirmation_id', 'requires_confirmation', 'status'] },
+  // WB Sync — sync outcome tracking
+  { table: 'wb_sync_log',             columns: ['status', 'sync_type'] },
+  // Alerts — dedup key is safety-critical (prevents spam)
+  { table: 'alert_log',               columns: ['idempotency_key', 'alert_type'] },
+  // Bot users — registration required for notifications
+  { table: 'bot_users',               columns: ['chat_id', 'user_id'] },
 ];
 
 // ============================================================

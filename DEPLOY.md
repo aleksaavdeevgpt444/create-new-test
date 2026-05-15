@@ -2,7 +2,9 @@
 
 Проект: **ИИ агенты-помощники**  
 Платформа: Cloudflare Workers + D1 (SQLite)  
-Версия схемы БД: 43 таблицы, 35 индексов
+Версия схемы БД: 49 таблиц, 40 индексов  
+Исходных модулей: 22 `.gs` файла + `worker.js`  
+Единый деплой-файл: `worker_bundle.js` (21 663 строки, ~856 KB)
 
 ---
 
@@ -49,463 +51,394 @@ wrangler d1 execute ai-agents-db --file=schema.sql
 
 Worker → Settings → Variables → Environment Variables → Add:
 
-| Переменная | Тип | Значение |
-|------------|-----|----------|
-| `TELEGRAM_BOT_TOKEN` | Secret | токен бота от @BotFather |
-| `TELEGRAM_WEBHOOK_SECRET` | Secret | произвольная строка-секрет |
-| `GEMINI_API_KEY` | Secret | ключ Google Gemini |
-| `GROQ_API_KEY` | Secret | ключ Groq |
+| Переменная | Тип | Описание |
+|------------|-----|---------|
+| `TELEGRAM_BOT_TOKEN` | Secret | Токен бота от @BotFather |
+| `TELEGRAM_WEBHOOK_SECRET` | Secret | Произвольная строка-секрет для проверки вебхука |
+| `GEMINI_API_KEY` | Secret | Ключ Google Gemini (основной AI провайдер) |
+| `GROQ_API_KEY` | Secret | Ключ Groq (резервный AI провайдер) |
+| `WB_API_TOKEN` | Secret | Токен Wildberries API (для wb_data_sync) |
 | `INTERNAL_API_BASE` | Secret | URL внутреннего backend (если есть) |
-| `WB_API_TOKEN` | Secret | токен Wildberries API |
 
-Необязательные:
+### A6. Настроить Telegram вебхук
 
-| Переменная | Значение по умолчанию |
-|------------|-----------------------|
-| `GEMINI_CLASSIFICATION_MODEL` | `gemini-1.5-flash-latest` |
-| `GROQ_API_BASE` | `https://api.groq.com/openai/v1` |
-| `GROQ_MODEL` | `llama3-8b-8192` |
-| `ADMIN_TELEGRAM_ID` | (если нужна защита `/scheduler_run`) |
-
-### A6. Зарегистрировать Telegram Webhook
-
-```bash
-curl -X POST "https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "https://ai-agents-worker.YOUR_SUBDOMAIN.workers.dev/telegram/webhook",
-    "secret_token": "YOUR_WEBHOOK_SECRET",
-    "allowed_updates": ["message", "callback_query"]
-  }'
-```
-
-### A7. Проверить
+После деплоя и добавления секретов отправить боту команду `/setup_notify` или вызвать:
 
 ```
-GET https://ai-agents-worker.YOUR_SUBDOMAIN.workers.dev/health
+POST https://<your-worker>.workers.dev/webhook/setup
 ```
 
-Ожидаемый ответ:
+Бот пришлёт подтверждение с `setWebhook` статусом.
 
-```json
-{
-  "ok": true,
-  "build": "ai_helpers_worker_v1",
-  "modules": ["stage336_349", "wb_ops_stage1", "wb_ops_stage2", ...]
-}
-```
+### A7. Настроить Cron триггеры
+
+Worker → Settings → Triggers → Cron Triggers → Add:
+
+| Cron | Задание |
+|------|---------|
+| `0 3 * * *` | proposal_cleanup |
+| `0 4 * * *` | qa_daily |
+| `30 4 * * *` | wb_data_sync |
+| `30 5 * * *` | alerts_check |
+| `0 11 * * *` | wb_pricing_daily |
+| `0 5 * * *` | wb_daily_report |
+| `0 6 * * *` | fulfillment_daily |
+| `0 7 * * *` | cs_daily_report |
+| `0 8 * * *` | rop_daily_report |
+| `0 9 * * *` | design_daily_report |
+| `0 10 * * *` | procurement_daily |
+| `0 * * * *` | proposals_check |
+| `30 6 * * 1` | weekly_insights |
 
 ---
 
 ## Вариант B — Wrangler CLI
 
-### B1. Подготовка
+### Предварительные требования
 
 ```bash
 npm install -g wrangler
 wrangler login
 ```
 
-### B2. Создать D1 базу данных
+### B1. Создать D1 базу данных
 
 ```bash
 wrangler d1 create ai-agents-db
-# → database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# Скопировать database_id из вывода
 ```
 
-Вставить `database_id` в `wrangler.toml` → секцию `[[d1_databases]]`.
+Вставить `database_id` в `wrangler.toml`:
 
-### B3. Инициализировать схему БД
+```toml
+[[d1_databases]]
+binding = "DB"
+database_name = "ai-agents-db"
+database_id = "<ВСТАВИТЬ_ID>"
+```
+
+### B2. Применить схему БД
 
 ```bash
-# Продакшн
 wrangler d1 execute ai-agents-db --file=schema.sql
-
-# Staging
-wrangler d1 execute ai-agents-db-staging --file=schema.sql --env staging
 ```
 
-### B4. Установить секреты
+### B3. Установить секреты
 
 ```bash
-# Обязательные
 wrangler secret put TELEGRAM_BOT_TOKEN
 wrangler secret put TELEGRAM_WEBHOOK_SECRET
 wrangler secret put GEMINI_API_KEY
 wrangler secret put GROQ_API_KEY
-wrangler secret put INTERNAL_API_BASE
 wrangler secret put WB_API_TOKEN
-
-# Необязательные
-wrangler secret put GEMINI_CLASSIFICATION_MODEL
-wrangler secret put GROQ_API_BASE
-wrangler secret put GROQ_MODEL
-wrangler secret put ADMIN_TELEGRAM_ID
+wrangler secret put INTERNAL_API_BASE   # если нужен
 ```
 
-### B5. Деплой
+### B4. Деплой
 
 ```bash
-# Продакшн
+# Production
 wrangler deploy
 
 # Staging
 wrangler deploy --env staging
 ```
 
-### B6. Зарегистрировать webhook и проверить
+### B5. Настроить вебхук
 
-Аналогично шагам A6 и A7.
+```bash
+curl -X POST https://<your-worker>.workers.dev/webhook/setup \
+  -H "Content-Type: application/json"
+```
+
+### B6. Проверить здоровье системы
+
+```bash
+curl https://<your-worker>.workers.dev/agent/qa/check | jq .overall_status
+```
 
 ---
 
-## Обновление существующего деплоя
+## Миграция существующей БД
 
-Если база данных уже существует — использовать `migration.sql` вместо `schema.sql`:
+Если у вас уже есть база и вы обновляете систему — применяйте `migration.sql` вместо `schema.sql`:
 
 ```bash
 wrangler d1 execute ai-agents-db --file=migration.sql
 ```
 
-`migration.sql` содержит только новые таблицы (безопасно применять к рабочей БД).  
-Новые колонки в существующих таблицах добавляются автоматически при запуске Worker через `ALTER TABLE ... ADD COLUMN` (с обработкой ошибки дублирования).
+`migration.sql` содержит 25 секций (`ALTER TABLE`, `CREATE TABLE IF NOT EXISTS`) и безопасен для повторного запуска.
 
 ---
 
-## Настройка планировщика
+## Структура системы
 
-После деплоя настроить уведомления для cron-заданий:
-
-```bash
-# Установить chat_id для уведомлений (replace 123456789 your Telegram chat ID)
-curl -X POST https://YOUR_WORKER.workers.dev/agent/scheduler/config \
-  -H "Content-Type: application/json" \
-  -d '{"job_name":"wb_daily_report","notify_chat_id":"123456789","notify_on_error":true}'
-```
-
-### Расписание cron-заданий (UTC)
-
-| Время UTC | Задание | Описание |
-|-----------|---------|----------|
-| 03:00 | `proposal_cleanup` | Истечение старых proposals |
-| 04:00 | `qa_daily` | Системный health check |
-| 05:00 | `wb_daily_report` | WB Operations Chief |
-| 06:00 | `fulfillment_daily` | Fulfillment Chief |
-| 07:00 | `cs_daily_report` | CS Operations Chief |
-| 08:00 | `rop_daily_report` | ROP Chief |
-| 09:00 | `design_daily_report` | Design Chief |
-| 10:00 | `procurement_daily` | Procurement Chief |
-| каждый час | `proposals_check` | Дайджест если >5 pending |
-| 06:30 пн | `weekly_insights` | Еженедельные инсайты |
-
----
-
-## Структура файлов
+### Исходные модули (в порядке загрузки в bundle)
 
 | Файл | Назначение |
 |------|-----------|
-| `worker_bundle.js` | **Единый JS-файл для загрузки в Workers** (все модули склеены) |
-| `worker.js` | Главный роутер (исходник) |
-| `schema.sql` | **Полная схема БД** для инициализации с нуля |
-| `migration.sql` | Инкрементальное обновление существующей БД |
-| `wrangler.toml` | Конфигурация Cloudflare Workers |
-| `stage336_349_agent_extension.gs` | Базовый агент: proposals, audit log, inbox hub |
-| `wb_operations_stage1_v1.gs` | WB: SKU Monitor, Ads Control, Finance, Alerts |
-| `wb_operations_stage2_v1.gs` | WB: Stock&Fulfillment, Procurement, Consistency |
-| `wb_operations_stage2_patch.gs` | WB Stage 2: schema patch + reconciliation checks |
-| `cs_operations_stage1_v1.gs` | CS: Review Response, Q&A, Return Reason, Tone |
-| `cs_operations_stage2_v1.gs` | CS: Complaint/Appeal, Knowledge Base, Tone V2 |
-| `approval_flow_v1.gs` | Unified proposals digest и подтверждения |
-| `qa_runner_v1.gs` | QA: 43 таблицы, 37 колонок, integrity checks |
-| `handoff_events_v1.gs` | Межшефная коммуникация |
-| `scheduler_v1.gs` | Cron-оркестратор (10 заданий) |
-| `design_chief_v1.gs` | AI-шеф дизайна: карточки, SEO, контент-план |
-| `rop_chief_v1.gs` | AI-шеф РОП: KPI, воронка продаж, цели |
-| `fulfillment_chief_v1.gs` | AI-шеф фулфилмент: FBS Monitor, TZ Generator |
-| `procurement_chief_v1.gs` | AI-шеф закупок: заказы поставщикам, цены |
-| `wb_api_client_v1.gs` | **Последний в цепочке**: реальные WB API-вызовы |
+| `stage336_349_agent_extension.gs` | Базовая инфраструктура агентов, типы |
+| `stage336_349_router_patch.gs` | Патч маршрутизатора |
+| `wb_operations_stage1_v1.gs` | WB Operations Chief, отчёты |
+| `wb_ops_router_patch.gs` | Патч WB маршрутов |
+| `wb_operations_stage2_v1.gs` | WB Stock Analyst, стоковые расчёты |
+| `wb_operations_stage2_patch.gs` | Патч Stage 2 |
+| `cs_operations_stage1_v1.gs` | CS Chief, входящие сообщения |
+| `cs_operations_stage2_v1.gs` | CS Stage 2, апелляции, пробелы знаний |
+| `approval_flow_v1.gs` | Дайджест подтверждений |
+| `qa_runner_v1.gs` | QA, проверка здоровья системы |
+| `handoff_events_v1.gs` | События передачи между агентами |
+| `scheduler_v1.gs` | Планировщик cron-задач |
+| `design_chief_v1.gs` | Design Chief, карточки товаров |
+| `rop_chief_v1.gs` | ROP Chief, KPI и таргеты |
+| `fulfillment_chief_v1.gs` | Fulfillment Chief, FBS, ТЗ |
+| `procurement_chief_v1.gs` | Procurement Chief, закупки |
+| `wb_sync_v1.gs` | WB Data Sync, снапшоты из WB API |
+| `wb_pricing_v1.gs` | Price & Discount Advisor |
+| `supplier_management_v1.gs` | Справочник поставщиков |
+| `bot_setup_v1.gs` | Настройка бота, регистрация пользователей |
+| `alerts_v1.gs` | Система алертов (7 типов, дедупликация) |
+| `wb_api_client_v1.gs` | WB API клиент |
+| `worker.js` | Cloudflare Worker entry point |
+
+### Таблицы D1 (49 обязательных + 1 опциональная)
+
+| Группа | Таблицы |
+|--------|---------|
+| Agent Extension | agent_incoming_messages, agent_proposals, agent_settings, agent_audit_log |
+| WB Stage 1 | wb_daily_snapshot, wb_sku_snapshot, wb_ads_snapshot, wb_finance_snapshot, wb_stock_snapshot, wb_agent_report, wb_agent_alerts, wb_agent_proposals, wb_action_log, wb_cost_data |
+| WB Stage 2 | wb_stock_snapshot_v2, wb_procurement_snapshot, supplier_directory, wb_report_consistency_check, wb_report_health_summary, wb_report_consistency_check_v2 |
+| CS | cs_inbox_item, cs_draft_response, cs_product_issue, cs_knowledge_item, cs_feedback_insight, cs_appeal_item, cs_knowledge_gap |
+| Approval | approval_digest_log |
+| Handoff | handoff_event |
+| Scheduler | scheduler_run_log, scheduler_config |
+| Design | design_handoff_item, design_card_snapshot, design_content_plan |
+| ROP | rop_kpi_snapshot, rop_target, rop_insight |
+| Fulfillment | fulfillment_fbs_snapshot, fulfillment_tz_item, fulfillment_schedule |
+| Procurement | procurement_order, procurement_handoff_item, procurement_price_history |
+| WB Sync | wb_sync_log |
+| WB Pricing | wb_pricing_proposal, wb_pricing_history |
+| Bot Setup | bot_users |
+| Alerts | alert_config, alert_log |
+| Optional | hub_records |
 
 ---
 
-## Telegram-команды
+## Telegram команды
+
+### Основные
+
+| Команда | Описание |
+|---------|---------|
+| `/start` | Регистрация, приветствие |
+| `/help` | Полный список команд |
+| `/status` | Статус синхронизации и алертов |
+| `/setup_notify` | Назначить этот чат получателем уведомлений |
 
 ### WB Operations
 
 | Команда | Описание |
-|---------|----------|
-| `/wb_report` | Запустить полный WB-отчёт |
-| `/wb_risks` | Критические риски |
-| `/wb_sku` | Анализ SKU |
-| `/wb_ads` | Рекламные кампании |
-| `/wb_finance` | Финансовый отчёт |
-| `/wb_stock` | Остатки на складах |
-| `/wb_procurement` | Закупки Stage 1 |
-| `/wb_stock_v2` | Расширенный анализ остатков (Stage 2) |
-| `/wb_report_health` | Состояние отчётности + inconsistency check |
-| `/wb_supply` | Поставки и рекомендации |
+|---------|---------|
+| `/wb_report` | Ежедневный отчёт WB Operations |
+| `/wb_stock` | Критические стоки |
+| `/wb_proposals` | Ожидающие предложения |
+| `/wb_approve <id>` | Подтвердить предложение |
+| `/wb_reject <id>` | Отклонить предложение |
+| `/wb_sync` | Статус последней синхронизации WB |
+| `/wb_sync_run` | Запустить синхронизацию вручную |
 
 ### CS Operations
 
 | Команда | Описание |
-|---------|----------|
-| `/cs_run` | Запустить полный CS-отчёт |
-| `/cs_reviews` | Необработанные отзывы |
-| `/cs_questions` | Вопросы покупателей |
-| `/cs_returns` | Анализ возвратов |
-| `/cs_appeals` | Апелляции к WB |
-| `/cs_issues` | Проблемные обращения |
-| `/cs_knowledge` | База знаний (пробелы, шаблоны) |
+|---------|---------|
+| `/cs_inbox` | Новые входящие обращения |
+| `/cs_drafts` | Черновики ответов |
+| `/cs_approve <id>` | Одобрить черновик |
+| `/cs_issues` | Открытые проблемы с товарами |
+| `/cs_knowledge` | База знаний |
 
-### Proposals и дайджест
+### Ценообразование
 
 | Команда | Описание |
-|---------|----------|
-| `/pending` | Список ожидающих подтверждения |
-| `/digest` | Дайджест proposals |
-| `/expired` | Просроченные proposals |
-| `/approve_all_low` | Подтвердить все low-risk proposals |
+|---------|---------|
+| `/pricing` | Запустить Price & Discount Advisor |
+| `/pricing_proposals` | Ожидающие ценовые предложения |
 
-### Handoff Events
+### Алерты
 
 | Команда | Описание |
-|---------|----------|
-| `/handoffs` | Все pending handoffs |
-| `/handoffs_wb` | Handoffs для WB Operations Chief |
-| `/handoffs_cs` | Handoffs для CS Operations Chief |
+|---------|---------|
+| `/alerts` | Алерты за сегодня |
+| `/alerts_config` | Настройка порогов алертов |
+
+### Design Chief
+
+| Команда | Описание |
+|---------|---------|
+| `/design_report` | Ежедневный отчёт Design Chief |
+| `/design_tasks` | Задачи на контент |
+
+### ROP Chief
+
+| Команда | Описание |
+|---------|---------|
+| `/rop_report` | Ежедневный KPI отчёт |
+| `/rop_targets` | Таргеты с pending статусом |
+
+### Fulfillment Chief
+
+| Команда | Описание |
+|---------|---------|
+| `/fulfillment_report` | Ежедневный отчёт фулфилмента |
+| `/fulfillment_schedule` | Расписание поставок |
+
+### Procurement Chief
+
+| Команда | Описание |
+|---------|---------|
+| `/procurement_report` | Ежедневный отчёт закупок |
+| `/procurement_orders` | Ожидающие заявки на закупку |
+
+### Поставщики
+
+| Команда | Описание |
+|---------|---------|
+| `/suppliers` | Список поставщиков |
+| `/supplier_add` | Добавить поставщика |
 
 ### Планировщик
 
 | Команда | Описание |
-|---------|----------|
+|---------|---------|
 | `/scheduler_status` | Статус всех cron-заданий |
 | `/scheduler_run <job>` | Запустить задание вручную |
-| `/scheduler_logs` | Последние 10 запусков |
+| `/scheduler_history` | История запусков |
 
 ### QA
 
 | Команда | Описание |
-|---------|----------|
-| `/qa_check` | Полный health check системы |
-| `/qa_tables` | Только проверка таблиц |
-| `/qa_calc` | Только smoke tests вычислений |
-
-### Design Chief
-
-| Команда | Описание |
-|---------|----------|
-| `/design` | Запустить Design Chief |
-| `/design_handoffs` | Pending handoffs для дизайна |
-| `/design_plan` | Контент-план (ожидают подтверждения) |
-
-### ROP Chief
-
-| Команда | Описание |
-|---------|----------|
-| `/rop` | Запустить ROP Chief |
-| `/rop_handoffs` | Pending handoffs ROP |
-| `/rop_kpi` | KPI-снимок за сегодня |
-| `/rop_targets` | Активные цели и отклонения |
-
-### Fulfillment Chief
-
-| Команда | Описание |
-|---------|----------|
-| `/fulfillment` | Запустить Fulfillment Chief |
-| `/fulfillment_handoffs` | Pending handoffs фулфилмент |
-| `/fulfillment_tz` | ТЗ на поставку (ожидают подтверждения) |
-| `/fulfillment_fbs` | FBS-остатки (critical + high urgency) |
-| `/fulfillment_schedule` | График поставок |
-
-### Procurement Chief
-
-| Команда | Описание |
-|---------|----------|
-| `/procurement` | Запустить Procurement Chief |
-| `/procurement_handoffs` | Pending handoffs закупки |
-| `/procurement_orders` | Черновики заказов (ожидают подтверждения) |
-| `/procurement_suppliers` | Список активных поставщиков |
+|---------|---------|
+| `/qa_check` | Полная QA проверка системы |
+| `/qa_tables` | Проверка наличия таблиц |
+| `/qa_calc` | Тесты расчётных функций |
 
 ---
 
-## API-эндпоинты
+## REST API (основные эндпоинты)
 
-### Общие
-
-| Метод | Путь | Описание |
-|-------|------|----------|
-| GET | `/health` | Общий health check |
-| POST | `/telegram/webhook` | Точка входа Telegram webhook |
+### Health & QA
+```
+GET  /health
+GET  /agent/qa/check
+GET  /agent/qa/tables
+GET  /agent/qa/schema
+GET  /agent/qa/integrity
+GET  /agent/qa/calculations
+GET  /agent/qa/environment
+```
 
 ### WB Operations
+```
+GET  /agent/wb/report
+GET  /agent/wb/stock/critical
+GET  /agent/wb/proposals
+POST /agent/wb/proposals/:id/approve
+POST /agent/wb/proposals/:id/reject
+```
 
-| Метод | Путь | Описание |
-|-------|------|----------|
-| POST | `/agent/wb/report/run` | Запустить WB-отчёт |
-| GET | `/agent/wb/report/health` | Состояние отчётности |
-| GET | `/agent/wb/api/health` | Проверка WB API |
-| GET | `/agent/wb/api/prices?nm_ids=1,2,3` | Цены товаров |
-| GET | `/agent/wb/api/commissions` | Комиссии WB |
+### WB Data Sync
+```
+GET  /agent/wb/sync/status
+GET  /agent/wb/sync/log
+POST /agent/wb/sync/run
+```
+
+### WB Pricing
+```
+GET  /agent/pricing/proposals
+GET  /agent/pricing/proposals/:id
+POST /agent/pricing/run
+POST /agent/pricing/proposals/:id/confirm
+POST /agent/pricing/proposals/:id/skip
+GET  /agent/pricing/history
+```
 
 ### CS Operations
+```
+GET  /agent/cs/inbox
+GET  /agent/cs/drafts
+POST /agent/cs/drafts/:id/approve
+POST /agent/cs/drafts/:id/reject
+GET  /agent/cs/issues
+GET  /agent/cs/knowledge
+```
 
-| Метод | Путь | Описание |
-|-------|------|----------|
-| POST | `/agent/cs/report/run` | Запустить CS-отчёт |
-| POST | `/agent/cs/report/run/v2` | CS-отчёт V2 (новые агенты) |
-| GET | `/agent/cs/appeals` | Список апелляций |
-| GET | `/agent/cs/knowledge/gaps` | Пробелы в базе знаний |
+### Suppliers
+```
+GET  /agent/suppliers
+POST /agent/suppliers
+GET  /agent/suppliers/:id
+PUT  /agent/suppliers/:id
+DELETE /agent/suppliers/:id
+GET  /agent/suppliers/nm/:nm_id
+GET  /agent/suppliers/prices
+POST /agent/suppliers/prices
+```
 
-### Proposals
+### Alerts
+```
+GET  /agent/alerts
+GET  /agent/alerts/config
+POST /agent/alerts/config
+POST /agent/alerts/run
+```
 
-| Метод | Путь | Описание |
-|-------|------|----------|
-| GET | `/agent/proposals/pending` | Ожидающие подтверждения |
-| GET | `/agent/proposals/expired` | Просроченные |
-| GET | `/agent/proposals/stats` | Статистика |
-| POST | `/agent/proposals/digest` | Отправить дайджест |
-| POST | `/agent/proposals/cleanup` | Истечь старые proposals |
-
-### QA
-
-| Метод | Путь | Описание |
-|-------|------|----------|
-| GET | `/agent/qa/check` | Полный health check |
-| GET | `/agent/qa/tables` | Проверка таблиц |
-| GET | `/agent/qa/schema` | Проверка схемы |
-| GET | `/agent/qa/integrity` | Целостность данных |
-| GET | `/agent/qa/calculations` | Smoke tests |
-| GET | `/agent/qa/environment` | Переменные окружения |
-
-### Handoffs
-
-| Метод | Путь | Описание |
-|-------|------|----------|
-| GET | `/agent/handoffs` | Список handoffs |
-| GET | `/agent/handoffs/stats` | Статистика |
-| POST | `/agent/handoffs` | Создать handoff |
-| POST | `/agent/handoffs/:id/acknowledge` | Подтвердить получение |
-| POST | `/agent/handoffs/:id/resolve` | Закрыть handoff |
-| POST | `/agent/handoffs/:id/dismiss` | Отклонить |
-| POST | `/agent/handoffs/expire` | Истечь старые |
+### Bot
+```
+POST /webhook/setup
+GET  /agent/bot/users
+GET  /agent/bot/status
+```
 
 ### Scheduler
-
-| Метод | Путь | Описание |
-|-------|------|----------|
-| GET | `/agent/scheduler/status` | Статус заданий |
-| GET | `/agent/scheduler/logs` | Журнал запусков |
-| POST | `/agent/scheduler/run` | Запустить задание |
-| POST | `/agent/scheduler/config` | Настроить задание |
-
-### Design Chief
-
-| Метод | Путь | Описание |
-|-------|------|----------|
-| POST | `/agent/design/report/run` | Запустить Design Chief |
-| GET | `/agent/design/handoffs` | Handoffs дизайна |
-| GET | `/agent/design/plan` | Контент-план |
-| GET | `/agent/design/card/:nm_id` | Снимок карточки |
-
-### ROP Chief
-
-| Метод | Путь | Описание |
-|-------|------|----------|
-| POST | `/agent/rop/report/run` | Запустить ROP Chief |
-| GET | `/agent/rop/handoffs` | Handoffs ROP |
-| GET | `/agent/rop/kpi` | KPI-снимки |
-| GET | `/agent/rop/targets` | Активные цели |
-| POST | `/agent/rop/targets` | Создать цель |
-
-### Fulfillment Chief
-
-| Метод | Путь | Описание |
-|-------|------|----------|
-| POST | `/agent/fulfillment/report/run` | Запустить Fulfillment Chief |
-| GET | `/agent/fulfillment/fbs` | FBS-снимки |
-| GET | `/agent/fulfillment/tz` | ТЗ на поставку |
-| GET | `/agent/fulfillment/schedule` | График поставок |
-| POST | `/agent/fulfillment/tz/:id/confirm` | Подтвердить ТЗ |
-| POST | `/agent/fulfillment/tz/:id/cancel` | Отменить ТЗ |
-
-### Procurement Chief
-
-| Метод | Путь | Описание |
-|-------|------|----------|
-| POST | `/agent/procurement/report/run` | Запустить Procurement Chief |
-| GET | `/agent/procurement/handoffs` | Handoffs закупки |
-| GET | `/agent/procurement/orders` | Черновики заказов |
-| GET | `/agent/procurement/suppliers` | Список поставщиков |
-| POST | `/agent/procurement/orders/:id/confirm` | Подтвердить заказ |
-| POST | `/agent/procurement/orders/:id/cancel` | Отменить заказ |
-| POST | `/agent/procurement/prices` | Добавить цену поставщика |
+```
+GET  /agent/scheduler/status
+POST /agent/scheduler/run/:job
+GET  /agent/scheduler/history
+GET  /agent/scheduler/config
+```
 
 ---
 
-## Правила безопасности (встроены в код)
+## Ограничения безопасности (hardcoded, не отключаются)
 
-| Правило | Где проверяется |
-|---------|----------------|
-| Все рискованные действия: `requires_confirmation = 1` | Все chiefs |
-| Все proposals имеют уникальный `confirmation_id` | Все chiefs |
-| `source_status: 'missing'` при отсутствии данных (никогда не ноль) | Все data loaders |
-| Нельзя автоматически менять рекламные ставки | WB Ads Control |
-| Нельзя автоматически создавать поставки | Fulfillment Chief |
-| Нельзя автоматически отправлять письма поставщикам | Procurement Chief |
-| Нельзя автоматически согласовывать закупки | Procurement Chief |
-| Нельзя автоматически отправлять ТЗ на фулфилмент | Fulfillment Chief |
-| AI готовит черновик, человек подтверждает | CS Stage 1 |
-| TZ-документы всегда `requires_confirmation = 1` | Fulfillment Chief |
+Система намеренно не выполняет следующие действия автоматически:
+
+- Не меняет рекламные ставки и бюджеты
+- Не создаёт поставки на WB
+- Не согласовывает закупки
+- Не отправляет ТЗ на фулфилмент
+- Не отправляет письма поставщикам
+- Не создаёт задачи без подтверждения оператора
+- Не удаляет данные
+- Не подменяет расчётные данные выводом AI
+- Не скрывает отсутствующие данные
+
+Все действия с `requires_confirmation=1` требуют явного подтверждения через Telegram (кнопки) или API. Каждое подтверждение имеет уникальный `confirmation_id`.
 
 ---
 
-## Troubleshooting
-
-**Telegram webhook не срабатывает**
+## Проверка после деплоя
 
 ```bash
-curl "https://api.telegram.org/bot{TOKEN}/getWebhookInfo"
+# Проверить здоровье
+curl https://<worker>.workers.dev/health
+
+# Полная QA проверка
+curl https://<worker>.workers.dev/agent/qa/check | jq '{status: .overall_status, summary: .summary}'
+
+# Статус таблиц
+curl https://<worker>.workers.dev/agent/qa/tables | jq '.missing_tables'
 ```
 
-Проверить что `secret_token` совпадает с `TELEGRAM_WEBHOOK_SECRET`.
-
-**Ошибки D1 / таблица не найдена**
-
-```bash
-wrangler d1 execute ai-agents-db --command "SELECT name FROM sqlite_master WHERE type='table'"
-```
-
-Если таблиц меньше 43 — запустить `schema.sql` или `migration.sql`.
-
-**WB API не отвечает**
-
-```
-GET /agent/wb/api/health
-```
-
-Проверить что `WB_API_TOKEN` установлен и не истёк. При статусе `auth_failed` получить новый токен в личном кабинете WB.
-
-**AI не отвечает, ответы пустые**
-
-Worker автоматически пробует Gemini → Groq → static fallback. Проверить оба ключа:
-
-```
-GET /agent/qa/environment
-```
-
-**Дубли proposals**
-
-Защита на уровне БД: `UNIQUE(confirmation_id)`. Дубли невозможны.
-
-**Проверить работу всей системы**
-
-```
-GET /agent/qa/check
-```
-
-Показывает: таблицы, схему, целостность данных, переменные окружения.
-
-**Живые логи**
-
-```bash
-wrangler tail
-```
+Или через Telegram: отправить боту `/qa_check`.

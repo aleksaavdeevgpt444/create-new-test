@@ -553,6 +553,56 @@ CREATE INDEX IF NOT EXISTS idx_wb_pricing_history_nm
 INSERT OR IGNORE INTO scheduler_config (id, job_name) VALUES
   ('scfg_pricing', 'wb_pricing_daily');
 
+-- ── §23 Bot Users ─────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS bot_users (
+  id               TEXT PRIMARY KEY,
+  telegram_user_id TEXT NOT NULL UNIQUE,
+  telegram_chat_id TEXT NOT NULL,
+  username         TEXT,
+  first_name       TEXT,
+  is_admin         INTEGER DEFAULT 0,
+  registered_at    TEXT DEFAULT (datetime('now')),
+  updated_at       TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_bot_users_tg
+  ON bot_users(telegram_user_id);
+
+-- ── §24–25 Alerts ─────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS alert_config (
+  id             TEXT PRIMARY KEY,
+  alert_type     TEXT NOT NULL UNIQUE,
+  enabled        INTEGER DEFAULT 1,
+  threshold      REAL,
+  cooldown_hours INTEGER DEFAULT 24,
+  notify_chat_id TEXT,
+  created_at     TEXT DEFAULT (datetime('now')),
+  updated_at     TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS alert_log (
+  id              TEXT PRIMARY KEY,
+  alert_type      TEXT NOT NULL,
+  nm_id           INTEGER,
+  sku_title       TEXT,
+  severity        TEXT DEFAULT 'warning',
+  message         TEXT NOT NULL,
+  chat_id         TEXT,
+  idempotency_key TEXT UNIQUE,
+  sent_at         TEXT DEFAULT (datetime('now')),
+  created_at      TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_alert_log_type
+  ON alert_log(alert_type, sent_at DESC);
+CREATE INDEX IF NOT EXISTS idx_alert_log_idem
+  ON alert_log(idempotency_key);
+
+INSERT OR IGNORE INTO scheduler_config (id, job_name) VALUES
+  ('scfg_alerts', 'alerts_check');
+
 -- ── End of migration.sql ──────────────────────────────────────
--- New tables added: 22 | New indexes: 24
+-- New tables added: 25 | New indexes: 27
 -- ALTER TABLE patches are handled automatically by Worker startup.

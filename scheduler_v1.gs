@@ -48,6 +48,8 @@ const SCHEDULES = {
   WB_DATA_SYNC:         '30 4 * * *',
   // WB Pricing Advisor at 11:00 UTC — after all chiefs have processed data
   WB_PRICING_DAILY:     '0 11 * * *',
+  // Alerts check at 05:30 UTC — after wb_data_sync and wb_daily_report
+  ALERTS_CHECK:         '30 5 * * *',
 };
 
 // Map job names to their handler functions (populated below after function definitions)
@@ -536,6 +538,21 @@ async function runProcurementDailyJob_(env) {
   }
 }
 
+async function runAlertsCheckJob_(env) {
+  try {
+    if (typeof runAllAlerts_ === 'function') {
+      return await runAllAlerts_(env);
+    }
+    return { status: 'skipped', reason: 'runAllAlerts_ not available' };
+  } catch (e) {
+    await wbLog_(env.DB, {
+      event_type: 'alerts_check_error',
+      details_json: JSON.stringify({ error: String(e) }),
+    });
+    throw e;
+  }
+}
+
 async function runWbPricingDailyJob_(env) {
   try {
     if (typeof runPricingChief_ === 'function') {
@@ -580,6 +597,7 @@ Object.assign(JOB_REGISTRY, {
   proposal_cleanup:    (env) => runProposalCleanupJob_(env),
   wb_data_sync:        (env) => runWbDataSyncCronJob_(env),
   wb_pricing_daily:    (env) => runWbPricingDailyJob_(env),
+  alerts_check:        (env) => runAlertsCheckJob_(env),
 });
 
 // Map SCHEDULES cron strings to their canonical job names
@@ -596,6 +614,7 @@ const CRON_TO_JOB = {
   [SCHEDULES.PROPOSAL_CLEANUP]:    'proposal_cleanup',
   [SCHEDULES.WB_DATA_SYNC]:        'wb_data_sync',
   [SCHEDULES.WB_PRICING_DAILY]:    'wb_pricing_daily',
+  [SCHEDULES.ALERTS_CHECK]:        'alerts_check',
 };
 
 // ---------------------------------------------------------------------------
@@ -685,6 +704,12 @@ async function handleScheduledEvent_(event, env, ctx) {
     case SCHEDULES.WB_PRICING_DAILY:
       ctx.waitUntil(
         runScheduledJob_(env, 'wb_pricing_daily', event.cron, () => runWbPricingDailyJob_(env))
+      );
+      break;
+
+    case SCHEDULES.ALERTS_CHECK:
+      ctx.waitUntil(
+        runScheduledJob_(env, 'alerts_check', event.cron, () => runAlertsCheckJob_(env))
       );
       break;
 

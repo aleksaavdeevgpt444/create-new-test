@@ -41,6 +41,7 @@ crons = [
   "0 3 * * *",    # 03:00 UTC — proposal_cleanup (expire old proposals)
   "0 4 * * *",    # 04:00 UTC — qa_daily (system health check before reports)
   "30 4 * * *",   # 04:30 UTC — wb_data_sync (fetch WB API → D1 snapshots)
+  "30 5 * * *",   # 05:30 UTC — alerts_check (stock/DRR/returns alerts)
   "0 11 * * *",   # 11:00 UTC — wb_pricing_daily (Price & Discount Advisor)
   "0 5 * * *",    # 05:00 UTC — wb_daily_report (WB Operations Chief)
   "0 6 * * *",    # 06:00 UTC — fulfillment_daily (Fulfillment Chief)
