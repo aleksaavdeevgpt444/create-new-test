@@ -407,7 +407,29 @@ async function runWeeklyInsightsJob_(env) {
     }
   }
 
-  return { users_processed: usersProcessed, errors };
+  // Also run WB weekly analytics and send summary to notify chat
+  let analyticsResult = null;
+  try {
+    if (typeof runWbWeeklyAnalytics_ === 'function') {
+      analyticsResult = await runWbWeeklyAnalytics_(env);
+
+      // Send Telegram summary to the first configured notify chat
+      const cfg = await db.prepare(
+        `SELECT notify_chat_id FROM scheduler_config WHERE notify_chat_id IS NOT NULL LIMIT 1`
+      ).first().catch(() => null);
+
+      if (cfg?.notify_chat_id && typeof sendTelegramMessage_ === 'function') {
+        const text = typeof formatAnalyticsForTelegram_ === 'function'
+          ? formatAnalyticsForTelegram_(analyticsResult)
+          : `📊 Аналитика недели готова (выручка ${analyticsResult.revenue_cur || 0} ₽)`;
+        await sendTelegramMessage_(env, cfg.notify_chat_id, text, { parse_mode: 'Markdown' });
+      }
+    }
+  } catch (_) {
+    // Analytics failure must not block the weekly insights run
+  }
+
+  return { users_processed: usersProcessed, errors, analytics: analyticsResult ? 'ok' : 'skipped' };
 }
 
 /**

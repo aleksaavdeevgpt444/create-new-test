@@ -1713,8 +1713,8 @@ async function handleWbCancelCallback_(env, chatId, userId, proposalId) {
 async function routeWbTelegramCommand_(env, msg, chatId, userId) {
   const text = (msg.text || '').trim();
 
-  if (text === '/wb_today')                    { await handleWbTodayCommand_(env, chatId, userId);       return true; }
-  if (text === '/wb_run')                      { await handleWbRunCommand_(env, chatId, userId);         return true; }
+  if (text === '/wb' || text === '/wb_today')   { await handleWbTodayCommand_(env, chatId, userId);       return true; }
+  if (text === '/wb_proposals' || text === '/wb_run') { await handleWbRunCommand_(env, chatId, userId);  return true; }
   if (text === '/wb_risks')                    { await handleWbRisksCommand_(env, chatId);               return true; }
   if (text === '/wb_ads')                      { await handleWbAdsCommand_(env, chatId);                 return true; }
   if (text === '/wb_finance')                  { await handleWbFinanceCommand_(env, chatId);             return true; }

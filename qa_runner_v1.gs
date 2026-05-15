@@ -8,7 +8,7 @@
 //
 // ── Checks performed ─────────────────────────────────────────
 //
-// SECTION 1 — Table existence (49 tables, 1 optional)
+// SECTION 1 — Table existence (50 tables, 1 optional)
 //   agent_incoming_messages, agent_proposals, agent_settings,
 //   agent_audit_log,
 //   wb_daily_snapshot, wb_sku_snapshot, wb_ads_snapshot,
@@ -33,6 +33,7 @@
 //   wb_pricing_proposal, wb_pricing_history,
 //   bot_users,
 //   alert_config, alert_log,
+//   wb_analytics_run,
 //   hub_records (optional)
 //
 // SECTION 2 — Schema column presence (17 tables, 46 columns)
@@ -156,6 +157,8 @@ const QA_REQUIRED_TABLES = [
   // §16 Alerts
   'alert_config',
   'alert_log',
+  // §17 Analytics
+  'wb_analytics_run',
 ];
 
 const QA_OPTIONAL_TABLES = [
@@ -936,7 +939,8 @@ async function routeQaTelegramCommand_(env, msg, chatId, userId) {
   const text = (msg.text || '').trim();
   const command = text.split(/\s+/)[0].toLowerCase();
 
-  if (command === '/qa_check') {
+  // /qa and /qa_full are aliases for /qa_check
+  if (command === '/qa' || command === '/qa_full' || command === '/qa_check') {
     try {
       const result    = await runFullQaCheck_(env);
       const formatted = formatQaResultForTelegram_(result);

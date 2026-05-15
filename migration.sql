@@ -606,3 +606,35 @@ INSERT OR IGNORE INTO scheduler_config (id, job_name) VALUES
 -- ── End of migration.sql ──────────────────────────────────────
 -- New tables added: 25 | New indexes: 27
 -- ALTER TABLE patches are handled automatically by Worker startup.
+
+-- ── §26 WB Analytics (wb_analytics_v1.gs) ─────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS wb_analytics_run (
+  id                TEXT PRIMARY KEY,
+  period_start      TEXT NOT NULL,
+  period_end        TEXT NOT NULL,
+  period_type       TEXT NOT NULL DEFAULT 'week',
+  revenue_cur       REAL,
+  revenue_prev      REAL,
+  orders_cur        INTEGER,
+  orders_prev       INTEGER,
+  returns_cur       INTEGER,
+  returns_prev      INTEGER,
+  ad_spend_cur      REAL,
+  ad_spend_prev     REAL,
+  avg_margin_cur    REAL,
+  avg_margin_prev   REAL,
+  net_profit_cur    REAL,
+  net_profit_prev   REAL,
+  skus_count_cur    INTEGER,
+  top_signals_json  TEXT,
+  top_growth_json   TEXT,
+  top_decline_json  TEXT,
+  ai_commentary     TEXT,
+  status            TEXT NOT NULL DEFAULT 'ok',
+  created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(period_start, period_end, period_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wb_analytics_run_period
+  ON wb_analytics_run(period_start, period_type);

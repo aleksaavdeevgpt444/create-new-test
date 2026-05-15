@@ -9,7 +9,7 @@
  *   GROQ_API_KEY                 — Groq API key
  *   GROQ_API_BASE                — (optional) default: https://api.groq.com/openai/v1
  *   GROQ_MODEL                   — (optional) default: llama3-8b-8192
- *   WB_API_TOKEN                 — (pending) WB API integration token
+ *   WB_API_TOKEN                 — Wildberries API token (active)
  *   INTERNAL_API_BASE            — Planner integration base URL
  *   DB                           — Cloudflare D1 binding
  *
@@ -33,6 +33,7 @@
  *   supplier_management_v1.gs ← Supplier Directory & Price History
  *   bot_setup_v1.gs       ← /start /help /status, webhook registration
  *   alerts_v1.gs          ← Real-time alert system
+ *   wb_analytics_v1.gs    ← Week-over-week business analytics
  *   wb_api_client_v1.gs   ← LAST: overrides WB/CS stubs with real API calls
  */
 
@@ -82,6 +83,7 @@ async function handleTelegramUpdate(update, request, env) {
     if (await routeSupplierTelegramCommand_(env, msg, chatId, userId))    return jsonResponse({ ok: true });
     if (await routeBotSetupTelegramCommand_(env, msg, chatId, userId))   return jsonResponse({ ok: true });
     if (await routeAlertsCommand_(env, msg, chatId, userId))              return jsonResponse({ ok: true });
+    if (await routeAnalyticsTelegramCommand_(env, msg, chatId, userId))   return jsonResponse({ ok: true });
   }
 
   if (update.callback_query) {
@@ -127,7 +129,7 @@ export default {
         return jsonResponse({
           ok: true,
           build: 'ai_helpers_worker_v1',
-          modules: ['stage336_349', 'wb_ops_stage1', 'wb_ops_stage2', 'wb_ops_stage2_patch', 'cs_stage1', 'cs_stage2', 'approval_flow', 'qa_runner', 'design_chief', 'rop_chief', 'fulfillment_chief', 'procurement_chief', 'wb_sync', 'wb_pricing', 'supplier_mgmt', 'bot_setup', 'alerts'],
+          modules: ['stage336_349', 'wb_ops_stage1', 'wb_ops_stage2', 'wb_ops_stage2_patch', 'cs_stage1', 'cs_stage2', 'approval_flow', 'qa_runner', 'design_chief', 'rop_chief', 'fulfillment_chief', 'procurement_chief', 'wb_sync', 'wb_pricing', 'supplier_mgmt', 'bot_setup', 'alerts', 'wb_analytics', 'wb_api_client'],
           timestamp: new Date().toISOString(),
         });
       }
@@ -235,6 +237,12 @@ export default {
       // 18. Bot setup routes (webhook/setup lives outside /agent/)
       if (pathname === '/webhook/setup' || pathname.startsWith('/agent/bot/')) {
         const r = await handleBotSetupRoutes_(env, request);
+        if (r) return r;
+      }
+
+      // 19. Analytics routes
+      if (pathname.startsWith('/agent/analytics')) {
+        const r = await handleAnalyticsRoutes_(env, request);
         if (r) return r;
       }
 
