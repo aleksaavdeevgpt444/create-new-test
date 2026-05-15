@@ -159,6 +159,7 @@ const QA_REQUIRED_TABLES = [
   'alert_log',
   // §17 Analytics
   'wb_analytics_run',
+  // §18 Ads Chief (reads wb_ads_snapshot — no new table needed)
 ];
 
 const QA_OPTIONAL_TABLES = [

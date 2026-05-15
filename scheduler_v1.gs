@@ -275,10 +275,30 @@ async function runWbDailyReportJob_(env) {
     );
   }
 
+  // Run Ads Chief analysis in parallel (non-blocking)
+  let adsResult = null;
+  try {
+    if (typeof runAdsChief_ === 'function') {
+      adsResult = await runAdsChief_(env);
+      // Surface waste alerts to notify chat if any
+      if (notifyChatId && adsResult.wasted?.length > 0 && typeof sendTelegramMessage_ === 'function') {
+        const wastedTotal = adsResult.wasted.reduce((s, w) => s + (w.total_spend || 0), 0);
+        await sendTelegramMessage_(env, notifyChatId,
+          `⚠️ Реклама: ${adsResult.wasted.length} кампаний сливают бюджет (${Math.round(wastedTotal)} ₽ без заказов)\n/ads_waste — детали`,
+          {}
+        );
+      }
+    }
+  } catch (_) {
+    // Ads failure must not block main WB report
+  }
+
   return {
     date: wbFormatDate_(date),
     status: reportResult?.status ?? 'completed',
     summary_preview: String(reportResult?.summary ?? '').slice(0, 200),
+    ads_campaigns: adsResult?.campaigns?.length ?? 0,
+    ads_wasted: adsResult?.wasted?.length ?? 0,
   };
 }
 
