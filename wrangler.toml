@@ -1,0 +1,88 @@
+# wrangler.toml — Cloudflare Workers configuration
+# Project: ИИ агенты-помощники
+#
+# Quick reference:
+#   Create D1 database : wrangler d1 create ai-agents-db
+#   Run locally        : wrangler dev
+#   Deploy (production): wrangler deploy
+#   Deploy (staging)   : wrangler deploy --env staging
+#   Tail live logs     : wrangler tail
+#
+# Required secrets (set each with: wrangler secret put <NAME>):
+#   TELEGRAM_BOT_TOKEN        — Telegram Bot API token from @BotFather
+#   TELEGRAM_WEBHOOK_SECRET   — Secret token for webhook validation
+#   GEMINI_API_KEY            — Google Gemini API key (primary AI provider)
+#   GROQ_API_KEY              — Groq API key (fallback AI provider)
+#   INTERNAL_API_BASE         — Base URL for the internal backend API
+#
+# Optional secrets (override defaults):
+#   GEMINI_CLASSIFICATION_MODEL — default: gemini-1.5-flash-latest
+#   GROQ_API_BASE               — default: https://api.groq.com/openai/v1
+#   GROQ_MODEL                  — default: llama3-8b-8192
+#   WB_API_TOKEN                — Wildberries API token (when WB integration is ready)
+#
+# Example: wrangler secret put TELEGRAM_BOT_TOKEN
+
+name = "ai-agents-worker"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[build]
+# No build step needed — pure JS Worker
+
+# ---------------------------------------------------------------------------
+# Cron triggers — scheduled jobs
+# Timezone note: all times are UTC. Athens = UTC+2 (winter) / UTC+3 (summer).
+# Adjust if needed for your timezone.
+# ---------------------------------------------------------------------------
+[triggers]
+crons = [
+  "0 3 * * *",    # 03:00 UTC — proposal_cleanup (expire old proposals)
+  "0 4 * * *",    # 04:00 UTC — qa_daily (system health check before reports)
+  "30 4 * * *",   # 04:30 UTC — wb_data_sync (fetch WB API → D1 snapshots)
+  "30 5 * * *",   # 05:30 UTC — alerts_check (stock/DRR/returns alerts)
+  "0 11 * * *",   # 11:00 UTC — wb_pricing_daily (Price & Discount Advisor)
+  "0 5 * * *",    # 05:00 UTC — wb_daily_report (WB Operations Chief)
+  "0 6 * * *",    # 06:00 UTC — fulfillment_daily (Fulfillment Chief)
+  "0 7 * * *",    # 07:00 UTC — cs_daily_report (CS Chief)
+  "0 8 * * *",    # 08:00 UTC — rop_daily_report (ROP Chief)
+  "0 9 * * *",    # 09:00 UTC — design_daily_report (Design Chief)
+  "0 10 * * *",   # 10:00 UTC — procurement_daily (Procurement Chief)
+  "0 * * * *",    # every hour — proposals_check (digest if >5 pending)
+  "30 6 * * 1",   # 06:30 UTC Monday — weekly_insights (offset from fulfillment)
+]
+
+# ---------------------------------------------------------------------------
+# D1 Database binding (production)
+#
+# To create the database and get its ID:
+#   wrangler d1 create ai-agents-db
+#
+# Copy the printed database_id and replace the placeholder below.
+# ---------------------------------------------------------------------------
+[[d1_databases]]
+binding = "DB"
+database_name = "ai-agents-db"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+# ---------------------------------------------------------------------------
+# Production environment
+# Secrets for this environment are set with:
+#   wrangler secret put <NAME>           (targets production by default)
+# ---------------------------------------------------------------------------
+[env.production]
+name = "ai-agents-worker"
+
+# ---------------------------------------------------------------------------
+# Staging environment
+# Deploy with: wrangler deploy --env staging
+# Set staging secrets with: wrangler secret put <NAME> --env staging
+# ---------------------------------------------------------------------------
+[env.staging]
+name = "ai-agents-worker-staging"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "ai-agents-db-staging"
+database_id = "REPLACE_WITH_STAGING_D1_DATABASE_ID"
