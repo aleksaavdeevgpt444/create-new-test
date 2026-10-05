@@ -7,6 +7,9 @@ export interface Env {
   WB_API_TOKEN?: string;
   GOOGLE_SERVICE_ACCOUNT_JSON?: string;
   ENVIRONMENT?: string;
+  API_BEARER_TOKEN?: string;
+  TELEGRAM_WEBHOOK_SECRET?: string;
+  TELEGRAM_OWNER_ID?: string;
 }
 
 // Internal agent protocol types
@@ -177,3 +180,4 @@ export function dbGuard(env: Env): { ok: true; db: D1Database } | { ok: false; r
   }
   return { ok: true, db: env.AGENT_DB };
 }
+

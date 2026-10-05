@@ -19,7 +19,7 @@ function makeCheck(module: string, checks: Array<() => Promise<{ name: string; p
     }
 
     const failed = results.filter(r => !r.passed);
-    const status = errors.length > 0 ? 'failed' : failed.length > 0 ? 'warning' : 'passed';
+    const status = errors.length > 0 || failed.length > 0 ? 'failed' : warns.length > 0 ? 'warning' : 'passed';
 
     return {
       ok: status !== 'failed',
@@ -315,3 +315,4 @@ export async function runDevCheck(checkName: string, db: D1Database | null, env:
       };
   }
 }
+

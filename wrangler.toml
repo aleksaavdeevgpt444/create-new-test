@@ -13,7 +13,7 @@ ENVIRONMENT = "development"
 
 # Cron triggers for the Advanced Scheduler (Stage A26)
 # Runs every 5 minutes to process due schedules, detect stuck runs, and send heartbeats
-[[triggers]]
+[triggers]
 crons = ["*/5 * * * *"]
 
 # Secrets (set via `wrangler secret put`):
@@ -33,6 +33,9 @@ binding = "AGENT_DB"
 database_name = "ai-agents-db-staging"
 database_id = "placeholder-replace-with-staging-id"
 
+[env.staging.triggers]
+crons = ["*/5 * * * *"]
+
 # Production environment
 [env.production]
 name = "ai-agents-system-production"
@@ -42,3 +45,4 @@ vars = { ENVIRONMENT = "production" }
 binding = "AGENT_DB"
 database_name = "ai-agents-db-production"
 database_id = "placeholder-replace-with-production-id"
+

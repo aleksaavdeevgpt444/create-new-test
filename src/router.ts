@@ -39,6 +39,22 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   const path = url.pathname;
   const method = request.method;
 
+  // Fail closed: administrative routes require the owner's API credential.
+  if (path !== '/' && path !== '/health' && path !== '/telegram/webhook') {
+    if (!env.API_BEARER_TOKEN) return errorResponse('API authentication not configured', 503);
+    if (request.headers.get('Authorization') !== `Bearer ${env.API_BEARER_TOKEN}`) {
+      return errorResponse('Unauthorized', 401);
+    }
+  }
+  if (path === '/telegram/webhook') {
+    if (!env.TELEGRAM_WEBHOOK_SECRET || !env.TELEGRAM_OWNER_ID) {
+      return errorResponse('Telegram authentication not configured', 503);
+    }
+    if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.TELEGRAM_WEBHOOK_SECRET) {
+      return errorResponse('Unauthorized', 401);
+    }
+  }
+
   // Resolve DB (may be null — all handlers must handle gracefully)
   const db = env.AGENT_DB ?? null;
 
@@ -73,7 +89,8 @@ a{color:#60a5fa}h1{font-size:32px}</style></head>
     // ============================================================
     // SCHEMA INIT (dev utility)
     // ============================================================
-    if (path === '/dev/ensure-schema' && method === 'POST' || path === '/dev/ensure-schema' && method === 'GET') {
+    if (path === '/dev/ensure-schema' && method !== 'POST') return errorResponse('Use POST to initialize schema', 405);
+    if (path === '/dev/ensure-schema' && method === 'POST') {
       if (!db) return jsonResponse({ ok: false, warning: 'AGENT_DB not configured' }, 503);
 
       const statements = SCHEMA_SQL.split(';').map(s => s.trim()).filter(s => s.length > 0);
@@ -118,6 +135,11 @@ a{color:#60a5fa}h1{font-size:32px}</style></head>
         return jsonResponse({ ok: true, tables: (tables.results ?? []).map((r: Record<string, unknown>) => r.name), count: tables.results?.length ?? 0 });
       }
 
+      if (normalizedName === 'mvp-acceptance-check') {
+        if (!db) return errorResponse('AGENT_DB not configured', 503);
+        const result = await mvpAcceptanceCheck(db, env);
+        return jsonResponse(result, result.ok ? 200 : 500);
+      }
       const result = await runDevCheck(normalizedName, db, env);
       return jsonResponse(result, result.ok ? 200 : 500);
     }
@@ -134,16 +156,20 @@ a{color:#60a5fa}h1{font-size:32px}</style></head>
       const message = body.message as Record<string, unknown> | undefined;
       const callbackQuery = body.callback_query as Record<string, unknown> | undefined;
 
+      const sender = (callbackQuery?.from ?? message?.from) as Record<string, unknown> | undefined;
+      if (!sender || String(sender.id) !== env.TELEGRAM_OWNER_ID) {
+        return errorResponse('Forbidden', 403);
+      }
       if (callbackQuery) {
         // Handle approval callbacks from Telegram buttons
         const data = callbackQuery.data as string ?? '';
         const [action, actionId] = data.split(':');
 
         if (action === 'approve' && actionId) {
-          const result = await approveAction(db, actionId, 'telegram_owner');
+          const result = await approveAction(db, actionId, 'user-owner-001');
           return jsonResponse({ ok: result.ok });
         } else if (action === 'reject' && actionId) {
-          const result = await rejectAction(db, actionId, 'telegram_owner');
+          const result = await rejectAction(db, actionId, 'user-owner-001');
           return jsonResponse({ ok: result.ok });
         }
       }
@@ -396,7 +422,7 @@ a{color:#60a5fa}h1{font-size:32px}</style></head>
       if (!db) return jsonResponse({ ok: false, warning: 'No DB' }, 503);
       const actionId = path.split('/')[3];
       const body = await request.json() as Record<string, string>;
-      const result = await approveAction(db, actionId, body.approved_by ?? 'owner', body.reason);
+      const result = await approveAction(db, actionId, 'user-owner-001', body.reason);
       if (!result.ok) return errorResponse(result.error ?? 'Approve failed', 400);
       return jsonResponse({ ok: true, action_id: actionId });
     }
@@ -405,7 +431,7 @@ a{color:#60a5fa}h1{font-size:32px}</style></head>
       if (!db) return jsonResponse({ ok: false, warning: 'No DB' }, 503);
       const actionId = path.split('/')[3];
       const body = await request.json() as Record<string, string>;
-      const result = await rejectAction(db, actionId, body.rejected_by ?? 'owner', body.reason);
+      const result = await rejectAction(db, actionId, 'user-owner-001', body.reason);
       if (!result.ok) return errorResponse(result.error ?? 'Reject failed', 400);
       return jsonResponse({ ok: true, action_id: actionId });
     }
@@ -782,3 +808,4 @@ a{color:#60a5fa}h1{font-size:32px}</style></head>
     );
   }
 }
+
